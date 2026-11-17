@@ -1,0 +1,76 @@
+Desktop Linux enumerates V4L2 codecs as /dev/videoN and the request-API
+media controller as /dev/mediaN. The GPU sandbox allowlist is the
+ChromeOS names (/dev/video-decN, /dev/video-encN, /dev/media-decN) and
+only the first few of each. A udev rule publishes Apple AVD and AVE
+under those names. This patch makes the non-ChromeOS lookup use the
+same names and the same ten-node scan.
+
+The Linux pixel-format filter stays. A camera that happens to be
+symlinked onto one of these names is still rejected: a decoder or
+encoder input queue must be coded formats (H264, H264_SLICE, HEVC_SLICE,
+VP9_FRAME, and the other entries in is_video_format), and the other
+queue must be a raw pixel format. ChromeOS behavior is unchanged,
+including the legacy unnumbered /dev/video-dec node.
+
+--- a/media/gpu/v4l2/v4l2_device.cc
++++ b/media/gpu/v4l2/v4l2_device.cc
+@@ -698,11 +698,9 @@
+   // this should be fine, since |GetRequestsQueue()| is only called after
+   // the codec format is configured, and the VD/VDA instance is always tied
+   // to a specific format, so it will never need to switch media devices.
+-#if BUILDFLAG(IS_CHROMEOS)
++  // ChromeOS udev uses /dev/media-decN. Desktop Linux ships the same
++  // symlink: the GPU broker allowlist is that prefix, not /dev/mediaN.
+   static const std::string kRequestDevicePrefix = "/dev/media-dec";
+-#else
+-  static const std::string kRequestDevicePrefix = "/dev/media";
+-#endif
+ 
+   // We are sandboxed, so we can't query directory contents to check which
+   // devices are actually available. Try to open the first 10; if not present,
+@@ -861,19 +859,14 @@
+ }
+ 
+ void V4L2Device::EnumerateDevicesForType(Type type) {
+-#if BUILDFLAG(IS_CHROMEOS)
++  // Same names on ChromeOS and desktop Linux. On desktop Linux a udev
++  // rule creates these symlinks for the platform codec nodes. The Linux
++  // pixel-format filter below still rejects cameras and ISP nodes.
+   static const std::string kDecoderDevicePattern = "/dev/video-dec";
+   static const std::string kEncoderDevicePattern = "/dev/video-enc";
+   static const std::string kImageProcessorDevicePattern = "/dev/image-proc";
+   static const std::string kJpegDecoderDevicePattern = "/dev/jpeg-dec";
+   static const std::string kJpegEncoderDevicePattern = "/dev/jpeg-enc";
+-#else
+-  static const std::string kDecoderDevicePattern = "/dev/video";
+-  static const std::string kEncoderDevicePattern = "/dev/video";
+-  static const std::string kImageProcessorDevicePattern = "/dev/video";
+-  static const std::string kJpegDecoderDevicePattern = "/dev/video";
+-  static const std::string kJpegEncoderDevicePattern = "/dev/video";
+-#endif
+ 
+   std::string device_pattern;
+   v4l2_buf_type input_buf_type;
+@@ -911,18 +904,16 @@
+   // We are sandboxed, so we can't query directory contents to check which
+   // devices are actually available. Try to open the first 10; if not present,
+   // we will just fail to open immediately.
+-#if BUILDFLAG(IS_CHROMEOS)
++  // The broker allows video-dec0..4 and video-enc0..4. Scanning 10 matches
++  // the request-queue loop above. The old Linux scan of 256 existed because
++  // /dev/videoN is shared with cameras and ISP nodes.
+   constexpr int kMaxDevices = 10;
+   candidate_paths.reserve(kMaxDevices + 1);
+ 
++#if BUILDFLAG(IS_CHROMEOS)
+   // TODO(posciak): Remove this legacy unnumbered device once
+   // all platforms are updated to use numbered devices.
+   candidate_paths.push_back(device_pattern);
+-#else
+-  // On mainline Linux we need to check a much larger number of devices, mainly
+-  // because the device pattern is shared with ISP devices.
+-  constexpr int kMaxDevices = 256;
+-  candidate_paths.reserve(kMaxDevices);
+ #endif
+   for (int i = 0; i < kMaxDevices; ++i) {
+     candidate_paths.push_back(

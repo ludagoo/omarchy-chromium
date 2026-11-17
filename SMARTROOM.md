@@ -1,94 +1,93 @@
-# SmartRoom Chromium V4L2 test build
+# SmartRoom Chromium, direct V4L2
 
-Branch `smartroom/v4l2` of [ludagoo/omarchy-chromium](https://github.com/ludagoo/omarchy-chromium), cut from commit `8ca4ea9515c2aa329898c2f21566748ff92d0881`. That commit is what GitHub tag `v148.0.7778.96-21` points at. Omarchy's binary package `omarchy-chromium-bin` 148.0.7778.96-22 on `pkgs.omarchy.org` stable/aarch64 wraps that same GitHub release (`_build=21`). The packaging repo's committed `pkgver` was still 145.0.7632.75; this branch sets `pkgver=148.0.7778.96` so the tree matches the browser Omarchy ships.
+Branch `smartroom/v4l2-direct` of [ludagoo/omarchy-chromium](https://github.com/ludagoo/omarchy-chromium), cut from `smartroom/v4l2` at `8d21064`. That parent is Chromium 148.0.7778.96 with VA-API decode kept and a V4L2 stateful encoder added. This branch turns VA-API off on arm64 and uses Chromium's own V4L2 decoder and encoder.
 
-Package: `omarchy-chromium-smartroom-v4l2` 148.0.7778.96-23. `pkgrel=23` sorts above Omarchy's 22. It `provides` `chromium` and `omarchy-chromium`, and `conflicts` / `replaces` `omarchy-chromium-bin`.
+Package: `omarchy-chromium-smartroom-v4l2-direct` 148.0.7778.96-24. `pkgrel=24` sorts above Omarchy's `omarchy-chromium-bin` 148.0.7778.96-22 and above the previous test package `-23`. It `provides` `chromium` and `omarchy-chromium`, and `conflicts` / `replaces` `omarchy-chromium-bin`.
 
-Do not install this into a Studio image. It is a test package only.
+The x86_64 `PKGBUILD` is not modified. New patches are inert there: `use_v4l2_codec` stays false, `UseV4L2Codec()` returns false, and `AcceleratedVideoDecoder` stays on because `use_vaapi` is true.
 
 ## GN args
 
-`chromium.args.arm64.gn` is what the gclient path copies to `out/aarch64/args.gn`. The tarball path (`_use_chromium_src=0` in `PKGBUILD.arm64`) does not read that file, so the same args are also appended in `build()`.
+`chromium.args.arm64.gn` is what the gclient path copies to `out/aarch64/args.gn`. The tarball path (`_use_chromium_src=0`) does not read that file, so `PKGBUILD.arm64` `build()` appends the same args.
 
 | Arg | Value | Why |
 | --- | --- | --- |
-| `use_v4l2_codec` | `true` | `media/gpu/args.gni` defaults this to false. Turns on `//media/gpu/v4l2`, including the stateless decoder (`v4l2_video_decoder_backend_stateless.cc`) and, with the patch below, the stateful encoder. |
-| `use_vaapi` | `true` | Default on Linux arm64 when Ozone X11 or Wayland is on (`build/config/ozone.gni` enables both for `is_linux`). Set explicitly so VA-API cannot be dropped. `use_linux_video_acceleration` is `use_vaapi \|\| use_v4l2_codec`. |
-| `use_remoteexec` / `use_siso` | `false` | Omarchy's RBE is not on the studio build VM. Official release tarball, system clang, local ninja. |
-| `use_thin_lto` | `false` | `build/config/compiler/compiler.gni` turns ThinLTO on for official Clang builds. Linking that on 16 GB RAM fails. |
+| `use_v4l2_codec` | `true` | `media/gpu/args.gni` defaults this to false. Turns on `//media/gpu/v4l2`. |
+| `use_vaapi` | `false` | Default is true on Linux arm64 when Ozone X11 or Wayland is on. Set false so `video_decoder_pipeline.cc` takes the `#elif USE_V4L2_CODEC` arm. `use_linux_video_acceleration` is `use_vaapi \|\| use_v4l2_codec`, so the linux video stack stays on. |
+| `use_remoteexec` / `use_siso` | `false` | Omarchy's RBE is not on this build machine. Official release tarball, system clang, local ninja. |
+| `use_thin_lto` | `false` | ThinLTO links do not fit comfortably in 31 GB. |
 | `is_cfi` | `false` | CFI requires ThinLTO (`assert(!is_cfi \|\| use_thin_lto)`). |
-| `chrome_pgo_phase` | `0` | Skips the official PGO profile. The arm64 profile is optional for a functional test build. |
-| `concurrent_links` | `1` | One link at a time on 16 GB. |
+| `chrome_pgo_phase` | `0` | Skips the official PGO profile. |
+| `concurrent_links` | `1` | One link at a time. |
 | `target_cpu` / `target_os` | `arm64` / `linux` | Native Studio build. |
 
-`use_v4lplugin` stays false. That flag is the libv4l2 conversion plugin, not the kernel mem2mem device.
+`proprietary_codecs=true` leaves `enable_hevc_parser_and_hw_decoder` on for `is_linux` (`media/media_options.gni`). HEVC does not need an extra flag. `use_v4lplugin` stays false. That flag is the libv4l2 conversion plugin, not the kernel mem2mem device.
 
-## Why a patch
+The arm64 package does not depend on libva. ffmpeg on the Studio may still pull libva in for other packages. This package does not depend on `libva-v4l2-request` (the installed shim is `libva-v4l2_request-avd`).
 
-Chromium 148.0.7778.96 will not compile VA-API and V4L2 together:
+## Patches
 
-- `media/gpu/BUILD.gn` and `media/gpu/chromeos/BUILD.gn` have `assert(!(use_v4l2_codec && use_vaapi))`.
-- `media/gpu/v4l2/BUILD.gn` compiles `v4l2_video_encode_accelerator.cc` only when `is_chromeos`.
-- `CreateV4L2VEA()` in `gpu_video_encode_accelerator_factory.cc` returns nullptr unless `IS_CHROMEOS`. The comment points at crbug.com/901264 (DMA-buf offsets passed via `data_offset`, which is not in the V4L2 spec).
+`004-linux-v4l2-encode-keep-vaapi.patch` (from the parent branch) drops the mutual-exclusion asserts, builds `v4l2_video_encode_accelerator.cc` when `is_linux`, and makes `CreateV4L2VEA()` return a real encoder on Linux when `AcceleratedVideoEncoder` is enabled. The factory tries V4L2 first. With `use_vaapi=false` the asserts would have passed anyway. The encoder source list and the Linux `CreateV4L2VEA()` are why the patch stays. The decoder `#if` is left as upstream wrote it. VA-API off is what selects V4L2 decode.
 
-`004-linux-v4l2-encode-keep-vaapi.patch` removes the mutual-exclusion asserts, builds the stateful encoder on Linux, and registers it ahead of VA-API. On Linux the V4L2 encoder is created only when `AcceleratedVideoEncoder` is enabled, the same gate VA-API encode already uses. `GetSupportedProfiles()` is empty when no mem2mem encoder node exists, and the factory tries VA-API next.
+`007-v4l2-vaapi-image-processor.patch` and `008-fourcc-vaapi-and-v4l2.patch` existed so a both-flags build could compile. This branch compiles V4L2 only, and those two patches are not in the tree.
 
-The decoder pipeline is `#if USE_VAAPI` / `#elif USE_V4L2_CODEC`. With both flags set it stays on VA-API, so the libva-v4l2-request path is unchanged. The V4L2 stateless decoder is compiled and not selected. Do not reorder that `#if` or VA-API decode goes away. `007-v4l2-vaapi-image-processor.patch` does the same for the LibYUV and GL image-processor test helpers: those function bodies exist only in the V4L2-only branch, so with both flags the helpers return nullptr. `008-fourcc-vaapi-and-v4l2.patch` compiles both `FromVAFourCC` and `FromV4L2PixFmt`. The old `#elif` dropped the VA-API conversion whenever `use_v4l2_codec` was set.
+`011-linux-v4l2-device-names.patch` points the non-ChromeOS enumerator at `/dev/video-decN`, `/dev/video-encN`, `/dev/image-procN`, `/dev/jpeg-decN`, and `/dev/jpeg-encN`, and points `GetRequestsQueue()` at `/dev/media-decN`. The scan is 10 nodes. ChromeOS still opens the legacy unnumbered node. The Linux pixel-format filter is unchanged: a decoder or encoder is accepted when every input format is a non-JPEG coded format (including `H264_SLICE`, `HEVC_SLICE`, and `VP9_FRAME`) and some output format is a raw pixel fourcc. A camera does not pass that test.
 
-## Runtime flags for the Room Controller
+`012-linux-v4l2-gpu-sandbox.patch` calls `AddV4L2GpuPermissions()` from the desktop Linux fall-through of `FilePermissionsForGpu()` when `UseV4L2Codec()` is true, then still calls `AddStandardGpuPermissions()` for the DRM nodes. The helper allows `/dev/video-dec0..4`, `/dev/media-dec0..4`, `/dev/video-enc`, and `/dev/video-enc0..4`. It does not allow `/dev/videoN`. Out-of-process video decode is ChromeOS-only, so the GPU process is the one that opens these nodes. The kiosk's GPU feature status is already "Hardware accelerated" for decode, which sets `accelerated_video_decode_enabled` on the sandbox options.
 
-Feature names are from `media/base/media_switches.cc` at 148.0.7778.96. The 3-argument `BASE_FEATURE` form uses the explicit string. The 2-argument form drops the leading `k` (`base/feature_internal.h`).
+`013-v4l2-decode-feature-default.patch` defaults `kAcceleratedVideoDecodeLinux` (`AcceleratedVideoDecoder`) on when `USE_VAAPI` or `USE_V4L2_CODEC` is set. `AcceleratedVideoEncoder` stays off unless the caller enables it.
 
-```
-chromium \
-  --ozone-platform=wayland \
-  --enable-features=AcceleratedVideoDecoder,AcceleratedVideoEncoder \
-  --ignore-gpu-blocklist
-```
+Compile fixes kept from the parent branch: `005-unbundle-libpng-testonly.patch`, `006-rust-1.99-bytemuck.patch`, `009-glibc-2.43-sys-seccomp.patch`, `010-rust-1.99-qr-code.patch`, `glibc-2.42-baud-rate-fix.patch`, plus the Omarchy theme patches, Widevine, oauth, fortify, and the nodejs check. `compiler-rt-adjust-paths.patch` is skipped. It does not apply on Clang 23.
 
-- `AcceleratedVideoDecoder` (`kAcceleratedVideoDecodeLinux`) is **on by default when `USE_VAAPI` is set**, off otherwise. Pass it anyway so a field trial cannot disable decode.
-- `AcceleratedVideoEncoder` (`kAcceleratedVideoEncodeLinux`) is **off by default** on Linux. Without it both `CreateV4L2VEA()` and `CreateVaapiVEA()` return nullptr and encode is software.
-- `AcceleratedVideoDecodeLinuxGL` is on by default (2-argument feature, name keeps the identifier without `k`).
-- `VaapiIgnoreDriverChecks` exists and defaults off. Nothing in `media/gpu/vaapi/vaapi_wrapper.cc` reads it. VA-API init accepts any vendor string (`kOther` is allowed). libva-v4l2-request does not need this flag unless a later check shows up in chrome://gpu.
-- `--ignore-gpu-blocklist` covers the GPU process blocklist, which is separate from the VA-API feature.
+## udev
 
-Aurora's AVE driver does not list the M2 Max (t6021) yet. Encode cannot be proven on current Studios. The binary is ready for a machine whose kernel exposes a V4L2 stateful encoder.
+`chromium-v4l2.rules` installs as `/usr/lib/udev/rules.d/70-chromium-v4l2.rules`.
+
+| Match | Symlink |
+| --- | --- |
+| `SUBSYSTEM=="video4linux"`, `ATTR{name}=="avd"` | `/dev/video-dec0` |
+| `SUBSYSTEM=="media"`, `ATTR{model}=="avd"` | `/dev/media-dec0` |
+| `SUBSYSTEM=="video4linux"`, `ATTR{name}=="apple-ave"` | `/dev/video-encN` for the first free N in 0..4 |
+
+The encoder index comes from `/usr/lib/chromium/chromium-v4l2-enc-index`. It takes `flock` on `/run/lock/chromium-v4l2-enc.lock` and prints one integer. udev turns that into `%c`. Two AVE nodes (the M2 has `40d100000.video-codec` and `507100000.video-codec`) get `video-enc0` and `video-enc1`. A node past index 4 would be invisible to the broker, so the helper exits 1 and udev skips the symlink.
+
+The symlinks do not change the target mode. The nodes are `root:video` mode `0660` with the seat `uaccess` ACL. The rules add `TAG+="uaccess"` as well. The kiosk user is in group `video`. v4l2loopback cameras are not matched: their sysfs name is not `avd` or `apple-ave`.
+
+`chromium-v4l2.install` runs `udevadm control --reload-rules` and `udevadm trigger` for `video4linux` and `media` on install, upgrade, and removal.
+
+Checked on the Studio before the build: `/dev/video0` is `ATTR{name}=="avd"` at `287080000.avd`, and `/dev/media0` is `ATTR{model}=="avd"`. AVE is not bound on this firmware. The expected runtime result is an empty encoder list and a browser that still plays and joins a meeting.
+
+AVD's media controller `bus_info` is `platform:avd` and the driver name is `avd`, matching the video node, so `GetRequestsQueue()` pairs them.
+
+## Runtime flags
+
+The Room Controller already passes `AcceleratedVideoEncoder`. It does not pass `AcceleratedVideoDecoder`. Patch 013 makes that default on for this binary, so the kiosk flags stay as they are. `VaapiVideoDecoder` and `VaapiVideoEncoder` in the kiosk flag list are unused names in this build. They do not select the VA-API classes, which are not compiled.
 
 ## Build
 
-On the Arch Linux ARM VM (`studio-build`), from this tree, with `PKGBUILD.arm64`:
+Native on the Studio, as the `srbuild` user, from this tree:
 
 ```
-MAKEFLAGS=-j6 PKGDEST=$HOME/fw-build/out/chromium-v4l2 makepkg -s --noconfirm -p PKGBUILD.arm64
+MAKEFLAGS=-j$(($(nproc)-2)) makepkg -s --noconfirm -p PKGBUILD.arm64
 ```
 
-Chromium 148 renamed the unbundle library from `harfbuzz-ng` to `harfbuzz` (`build/linux/unbundle/replace_gn_files.py` and `third_party/harfbuzz`). `PKGBUILD.arm64` uses that key. `compiler-rt-adjust-paths.patch` is skipped: Clang 23 and this tree already look up `libclang_rt.builtins.a` under the triple with an empty suffix. `005-unbundle-libpng-testonly.patch` adds the `libpng_for_testonly` group that Chromium 148 expects and the unbundled `libpng.gn` does not define. System Rust comes from rustup, so `rust_sysroot_absolute` is `rustc --print sysroot` (not `/usr`), and `third_party/rust-toolchain/bin/rustc` is a symlink because ninja still lists that path as an input. `rustc_version` is only the numeric version (`1.99.0`). The full `rustc --version` string has spaces, and the rsp file then passes `1.99.0` to rustc as a second source file. `006-rust-1.99-bytemuck.patch` drops `core::simd::LaneCount`, which Rust 1.95 removed and Rust 1.99 still does not have. `glibc-2.42-baud-rate-fix.patch` uses the `__B*` termios constants. glibc 2.43 defines `B9600` as the numeric baud, not the `speed_t` value. `009-glibc-2.43-sys-seccomp.patch` includes `<signal.h>` before Chromium's `SYS_SECCOMP` fallback. glibc 2.43 adds that name to the `SIGSYS` `si_code` enum, and the macro turned the enumerator into `1 = 1`. `010-rust-1.99-qr-code.patch` replaces `u8::max_value()` with `u8::MAX` in the vendored qr_code crate. Rust 1.99 deprecates that method, and the crate denies warnings. `package()` enters `$srcdir/chromium-$pkgver`. The previous `cd ../chromium-$pkgver` missed the tree when makepkg starts packaging from `$srcdir`. `PKGBUILD.arm64` also strips makepkg's `-march=armv8-a`. It was appended after libyuv's `-march=armv8-a+dotprod+i8mm`, and clang kept the last `-march`, so `udot` failed to assemble. The lite tarball's esbuild, gperf, and Rollup native binding are x86-64. prepare() installs the matching linux-arm64 esbuild and `@rollup/rollup-linux-arm64-gnu`, and points gperf at `/usr/bin/gperf`.
+`build()` runs ninja at `nproc-2` and keeps `concurrent_links=1`. Resume a partial tree with `makepkg --noextract`.
 
-The VM has no V4L2 device. A headless smoke test can only show that the binary exists and that V4L2 encode symbols were linked:
+Chromium 148 renamed the unbundle library from `harfbuzz-ng` to `harfbuzz`. `PKGBUILD.arm64` uses that key. System Rust comes from rustup (`rustc` 1.99 for this build). `rust_sysroot_absolute` is `rustc --print sysroot`, and `rustc_version` is only the numeric version. `PKGBUILD.arm64` strips makepkg's `-march=armv8-a` so libyuv's `+dotprod+i8mm` march survives. The lite tarball's esbuild, gperf, and Rollup native binding are x86-64. `prepare()` installs the linux-arm64 esbuild and `@rollup/rollup-linux-arm64-gnu`, and points gperf at `/usr/bin/gperf`.
 
-```
-/usr/lib/chromium/chromium --headless=new --disable-gpu --no-sandbox --version
-strings /usr/lib/chromium/chromium | grep -m1 V4L2VideoEncodeAccelerator
-```
+## Install
 
-`chrome://gpu` via `--dump-dom` will not report hardware encode without a device.
-
-## Install on a Studio
-
-Stock package is `omarchy-chromium-bin`. Replace it with this one. Do not bake it into an image.
+Keep the stock package file so it can be installed again:
 
 ```
-sudo pacman -U omarchy-chromium-smartroom-v4l2-148.0.7778.96-23-aarch64.pkg.tar.zst
+sudo pacman -U omarchy-chromium-smartroom-v4l2-direct-148.0.7778.96-24-aarch64.pkg.tar.zst
 ```
 
-Launch the kiosk with the flags above. Then:
+The Room Controller relaunches Chromium. Then:
 
-1. `chrome://gpu` — Video Encode should say **Hardware accelerated** once the AVE node exists. Video Decode should stay hardware accelerated through VA-API / libva-v4l2-request. If decode falls back to software, compare with the stock Omarchy browser on the same machine before blaming this build. The decoder `#if` was left on VA-API.
-2. `chrome://webrtc-internals` during a SmartRoom or Teams/ACS call — the outbound video codec implementation should name the V4L2 encoder (`V4L2VideoEncodeAccelerator`), not `OpenH264` or a software VP8 encoder. If the V4L2 node is missing, the factory falls through to VA-API encode and then to software. VA-API encode has no path to Aurora's AVE driver.
-3. CPU — compare `chromium` CPU while encoding the room camera against the stock browser forced to software encode (`--disable-accelerated-video-encode`). Hardware encode should sit well below a full core at the kiosk's camera resolution. If CPU matches software encode, the V4L2 device is not being opened. Check `dmesg` for the AVE driver and `v4l2-ctl --list-devices` for an encoder node.
+1. `/dev/video-dec0` and `/dev/media-dec0` exist and point at the AVD nodes.
+2. `chrome://gpu` Video Acceleration lists V4L2 decoders for H.264, VP9 profile 0, VP9 profile 2, and HEVC. The encoder list stays empty while AVE is unbound.
+3. `chrome://media-internals` names a V4L2 decoder, dropped frames stay at zero, and CPU stays in the same range as the stock `VaapiVideoDecoder` path for 1080p and 4K.
+4. One Zoom test meeting still connects. Encode of the meeting stays on OpenH264 until an `apple-ave` node exists.
 
-To go back:
-
-```
-sudo pacman -S omarchy-chromium-bin
-```
+Roll back with the saved `omarchy-chromium-bin` package if decode falls back to software, frames drop, or the meeting breaks.

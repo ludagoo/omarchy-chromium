@@ -1,0 +1,15 @@
+#!/bin/sh
+# Print the first free Chromium encoder index in 0..4.
+# udev PROGRAM stdout is %c. The GPU broker allows /dev/video-enc and
+# /dev/video-enc0..4, so a higher index would be invisible to Chromium.
+# flock so two apple-ave nodes added together do not pick the same slot.
+set -eu
+exec 9>/run/lock/chromium-v4l2-enc.lock
+/usr/bin/flock 9
+for i in 0 1 2 3 4; do
+  if [ ! -e "/dev/video-enc$i" ]; then
+    printf '%s\n' "$i"
+    exit 0
+  fi
+done
+exit 1

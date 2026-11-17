@@ -1,0 +1,14 @@
+# Chromium's GPU sandbox brokers the ChromeOS V4L2 names and refuses
+# /dev/videoN, so a camera is not authorized. Point those names at the
+# Apple codec nodes. Other SoCs need their own matches; these rules
+# only name Aurora's drivers.
+#
+# AVD (stateless request API): one decoder. sysfs name "avd", media
+# model "avd". Capture is NV12, and P010 after a 10-bit stream is set.
+# AVE (stateful mem2mem): sysfs name "apple-ave". This firmware may
+# expose two nodes. The index helper stays inside video-enc0..4, which
+# is the range the broker allows. v4l2loopback cameras do not match.
+
+ACTION=="add", SUBSYSTEM=="video4linux", ATTR{name}=="avd", SYMLINK+="video-dec0", TAG+="uaccess"
+ACTION=="add", SUBSYSTEM=="media", ATTR{model}=="avd", SYMLINK+="media-dec0", TAG+="uaccess"
+ACTION=="add", SUBSYSTEM=="video4linux", ATTR{name}=="apple-ave", PROGRAM=="/usr/lib/chromium/chromium-v4l2-enc-index", SYMLINK+="video-enc%c", TAG+="uaccess"

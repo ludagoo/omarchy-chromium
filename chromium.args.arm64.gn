@@ -35,23 +35,24 @@ target_os = "linux"
 use_remoteexec = false
 use_siso = false
 
-# V4L2 stateless decode + stateful encode, and VA-API together.
-# media/gpu/args.gni leaves use_v4l2_codec default false. use_vaapi defaults
-# true on Linux arm64 when ozone X11 or Wayland is on (ozone.gni turns both
-# on for is_linux). Chromium 148 still assert()s that the two are exclusive
-# (media/gpu/BUILD.gn and media/gpu/chromeos/BUILD.gn) and only compiles
-# v4l2_video_encode_accelerator.cc when is_chromeos. The encoder factory
-# returns nullptr on Linux. 004-linux-v4l2-encode-keep-vaapi.patch lifts that.
-# With both flags set, video_decoder_pipeline.cc keeps the VA-API decoder
-# (#if USE_VAAPI / #elif USE_V4L2), so libva-v4l2-request still decodes.
-# The V4L2 stateless decoder is compiled but not selected while USE_VAAPI
-# is set. The encoder factory tries V4L2 first, then VA-API.
+# Direct V4L2. media/gpu/args.gni leaves use_v4l2_codec default false.
+# use_vaapi defaults true on Linux arm64 when ozone X11 or Wayland is on
+# (ozone.gni turns both on for is_linux), so it is set false here on purpose.
+# video_decoder_pipeline.cc is #if USE_VAAPI / #elif USE_V4L2_CODEC, so VA-API
+# off selects V4L2VideoDecoder. AVD only advertises slice/frame fourccs, so
+# IsV4L2DecoderStateful() is false and the stateless request-API backend is
+# used. 004-linux-v4l2-encode-keep-vaapi.patch still builds the stateful
+# encoder on Linux and registers it ahead of VA-API. The mutual-exclusion
+# assert is not load-bearing once only one flag is set.
+# 013-v4l2-decode-feature-default.patch turns AcceleratedVideoDecoder on
+# for this build. Encode stays gated on AcceleratedVideoEncoder.
 use_v4l2_codec = true
-use_vaapi = true
+use_vaapi = false
 
-# 8 vCPU / 16 GB RAM. Official ThinLTO links do not fit. PGO profile download
-# is skipped. One link at a time. is_cfi defaults on for some official builds
-# and requires ThinLTO (build/config/compiler/compiler.gni).
+# Official ThinLTO links do not fit in 31 GB with the rest of the machine
+# awake. PGO profile download is skipped. One link at a time. is_cfi
+# defaults on for some official builds and requires ThinLTO
+# (build/config/compiler/compiler.gni).
 use_thin_lto = false
 is_cfi = false
 chrome_pgo_phase = 0

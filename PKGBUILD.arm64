@@ -1,9 +1,9 @@
 # Maintainer: Helmut Januschka <helmut@januschka.com>
 # Maintainer: David Heinemeier Hansson <david@hey.com>
 
-pkgname=omarchy-chromium-smartroom-v4l2
+pkgname=omarchy-chromium-smartroom-v4l2-direct
 pkgver=148.0.7778.96
-pkgrel=23
+pkgrel=24
 _launcher_ver=8
 _manual_clone=0
 _system_clang=1
@@ -12,15 +12,18 @@ _system_clang=1
 _use_chromium_src=0
 _chromium_upstream_src="$HOME/omarchy-chromium-src"  # Path to chromium checkout (change to your path)
 _skip_build=${SKIP_BUILD:-0}  # Set to 1 to skip build (for packaging pre-built binaries)
-pkgdesc="Omarchy Chromium 148 with V4L2 encode and VA-API decode, for SmartRoom Studio tests"
+pkgdesc="Omarchy Chromium 148 with direct V4L2 decode and encode for Apple Silicon"
 arch=('x86_64' 'aarch64')  # Include x86_64 to allow cross-compilation
 provides=('chromium' 'omarchy-chromium')
 conflicts=('chromium' 'omarchy-chromium' 'omarchy-chromium-bin')
 replaces=('omarchy-chromium-bin')
 url="https://github.com/omacom-io/omarchy-chromium"
 license=('BSD-3-Clause')
+install=chromium-v4l2.install
+# libva is not linked when use_vaapi=false. The arm64 package does not
+# depend on libva or libva-v4l2-request. ffmpeg on the system still may.
 depends=('gtk3' 'nss' 'alsa-lib' 'xdg-utils' 'libxss' 'libcups' 'libgcrypt'
-         'ttf-liberation' 'systemd' 'dbus' 'libpulse' 'pciutils' 'libva'
+         'ttf-liberation' 'systemd' 'dbus' 'libpulse' 'pciutils'
          'libffi' 'desktop-file-utils' 'hicolor-icon-theme')
 makedepends=('python' 'gn' 'ninja' 'clang' 'lld' 'gperf' 'nodejs' 'pipewire'
              'rust' 'rust-bindgen' 'qt6-base' 'java-runtime-headless'
@@ -304,9 +307,11 @@ EOF
     third_party/libxml/chromium/*.cc
 
   # Patches live next to this PKGBUILD. Alphabetical order applies
-  # 001, 002, 003, then 004-linux-v4l2-encode-keep-vaapi.patch.
-  # The tarball path used to name omarchy-theme-switcher.patch, which is
-  # not a file in this repo; the gclient path applied *.patch instead.
+  # 001, 002, 003, then 004-linux-v4l2-encode-keep-vaapi.patch, then
+  # 011-linux-v4l2-device-names, 012-linux-v4l2-gpu-sandbox, and
+  # 013-v4l2-decode-feature-default. The tarball path used to name
+  # omarchy-theme-switcher.patch, which is not a file in this repo; the
+  # gclient path applied *.patch instead.
   local _patch
   for _patch in "$startdir"/*.patch; do
     case "$(basename "$_patch")" in
@@ -510,7 +515,7 @@ build() {
   # that file; the gclient path does. Reasons are documented there.
   _flags+=(
     'use_v4l2_codec=true'
-    'use_vaapi=true'
+    'use_vaapi=false'
     'use_remoteexec=false'
     'use_siso=false'
     'use_thin_lto=false'
@@ -555,8 +560,12 @@ build() {
   CXXFLAGS=${CXXFLAGS/-march=armv8-a}
 
   gn gen out/aarch64 --args="${_flags[*]}"
-  # Leave about two cores free on the 8 vCPU build VM.
-  ninja -j6 -C out/aarch64 chrome chrome_sandbox chromedriver.unstripped
+  # Leave two cores for the rest of the machine. Floor at 1.
+  local _jobs=$(( $(nproc) - 2 ))
+  if (( _jobs < 1 )); then
+    _jobs=1
+  fi
+  ninja -j"$_jobs" -C out/aarch64 chrome chrome_sandbox chromedriver.unstripped
 }
 
 package() {
@@ -663,6 +672,12 @@ package() {
   done
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/chromium/LICENSE"
+
+  # ChromeOS-style codec node names. See chromium-v4l2.rules.
+  install -Dm644 "$startdir/chromium-v4l2.rules" \
+    "$pkgdir/usr/lib/udev/rules.d/70-chromium-v4l2.rules"
+  install -Dm755 "$startdir/chromium-v4l2-enc-index" \
+    "$pkgdir/usr/lib/chromium/chromium-v4l2-enc-index"
 }
 
 # vim:set ts=2 sw=2 et:

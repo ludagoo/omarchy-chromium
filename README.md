@@ -6,6 +6,21 @@
 
 A custom build of Chromium with the **Omarchy theme patches** - providing command-line theme switching capabilities for seamless integration with your desktop environment.
 
+## Apple Silicon V4L2 (branch `smartroom/v4l2-direct`)
+
+This branch builds Chromium 148.0.7778.96 for aarch64 so decode and encode both go through Chromium's V4L2 code. `chromium.args.arm64.gn` sets `use_v4l2_codec=true` and `use_vaapi=false`. The x86_64 `PKGBUILD` is unchanged. `PKGBUILD.arm64` does not depend on libva, so the package does not require `libva-v4l2-request`. HEVC stays available because `proprietary_codecs` already turns on `enable_hevc_parser_and_hw_decoder` for `is_linux`.
+
+Apple AVD is a stateless request-API decoder. Its video node name is `avd`, and it exposes H.264 as `V4L2_PIX_FMT_H264_SLICE`, HEVC as `V4L2_PIX_FMT_HEVC_SLICE`, and VP9 as `V4L2_PIX_FMT_VP9_FRAME`, with `NV12` capture and `P010` for 10-bit. Aurora's AVE encoder is stateful mem2mem. Its video node name is `apple-ave`, it takes `NV12`, and it produces stateful H.264 and HEVC. ChromeOS opens `/dev/video-decN`, `/dev/media-decN`, and `/dev/video-encN`. Those are also the only V4L2 paths the GPU sandbox broker allows. Desktop Linux otherwise scans `/dev/videoN`, and on desktop Linux the broker never grants a V4L2 node. The patches and the udev rule below are the small change that makes Chromium find AVD and AVE. `SMARTROOM.md` has the build and test notes.
+
+| File | Why it is here |
+| --- | --- |
+| `011-linux-v4l2-device-names.patch` | Desktop Linux looks up the ChromeOS device names and still applies the Linux pixel-format filter, so a camera symlinked onto those names is rejected. The scan is ten nodes, which matches the broker (`video-dec0..4`, `video-enc0..4`). The request-API media controller is `/dev/media-decN`. |
+| `012-linux-v4l2-gpu-sandbox.patch` | When the binary is built with V4L2, the desktop Linux GPU broker allows those ChromeOS names and then still allows the DRM render nodes. `UseV4L2Codec()` is false when `USE_V4L2_CODEC` is unset, so a VA-API x86_64 build does not gain these paths. |
+| `013-v4l2-decode-feature-default.patch` | `AcceleratedVideoDecoder` defaults on when VA-API or V4L2 is compiled in. Encode stays off until `AcceleratedVideoEncoder` is passed, which the Omarchy kiosk already passes. |
+| `004-linux-v4l2-encode-keep-vaapi.patch` | Builds `v4l2_video_encode_accelerator.cc` on Linux and registers that encoder. With `use_vaapi=false`, the existing decoder `#elif USE_V4L2_CODEC` selects `V4L2VideoDecoder`. AVD's slice and frame fourccs make `IsV4L2DecoderStateful()` return false, so the stateless backend is used. |
+| `chromium-v4l2.rules` | Symlinks the `avd` video node to `/dev/video-dec0` and the `avd` media node to `/dev/media-dec0`. Each `apple-ave` node gets `/dev/video-enc0` through `/dev/video-enc4` via `chromium-v4l2-enc-index`. Other SoCs need their own matches. |
+| `chromium-v4l2.install` | Reloads udev on install, upgrade, and removal so the symlinks appear without a reboot. |
+
 ## ✨ Features
 
 - 🎨 **Dynamic Theme Switching** - Change Chromium's theme via command-line flags

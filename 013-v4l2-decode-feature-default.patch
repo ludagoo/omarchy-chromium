@@ -1,0 +1,31 @@
+kAcceleratedVideoDecodeLinux ("AcceleratedVideoDecoder") defaults on
+only when USE_VAAPI is set. A V4L2-only desktop build compiles the
+decoder and then leaves the feature off, so playback stays on the
+software decoder unless every caller passes --enable-features. The
+Omarchy kiosk enables AcceleratedVideoEncoder and does not pass
+AcceleratedVideoDecoder, because the VA-API default already covers it.
+
+Default the feature on when this binary includes VA-API or V4L2.
+x86_64 stays on (use_vaapi is true there). A build with neither stays
+off. AcceleratedVideoEncoder stays off by default; the kiosk already
+passes that feature, and CreateV4L2VEA() checks it.
+
+media/base/media_switches.h includes media/gpu/buildflags.h, so
+USE_V4L2_CODEC is visible here.
+
+--- a/media/base/media_switches.cc
++++ b/media/base/media_switches.cc
+@@ -739,10 +739,12 @@
+ #if BUILDFLAG(IS_LINUX)
+ // Enable vaapi/v4l2 video decoding on linux. This is already enabled by default
+ // on chromeos, but needs an experiment on linux.
++// On when this build includes VA-API or V4L2. A V4L2-only desktop build
++// otherwise leaves hardware decode disabled even though the decoder is linked.
+ BASE_FEATURE(kAcceleratedVideoDecodeLinux,
+              "AcceleratedVideoDecoder",
+-#if BUILDFLAG(USE_VAAPI)
++#if BUILDFLAG(USE_VAAPI) || BUILDFLAG(USE_V4L2_CODEC)
+              base::FEATURE_ENABLED_BY_DEFAULT);
+ #else
+              base::FEATURE_DISABLED_BY_DEFAULT);
+ #endif

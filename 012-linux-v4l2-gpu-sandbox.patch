@@ -1,0 +1,30 @@
+On desktop Linux the GPU process opens V4L2 devices. Out-of-process
+video decode is ChromeOS-only, and video encode is in-process too.
+FilePermissionsForGpu() only called AddV4L2GpuPermissions() for
+ChromeOS and for the Chromecast allowlist. That helper allows
+/dev/video-dec0..4, /dev/media-dec0..4, /dev/video-enc and
+/dev/video-enc0..4. It does not allow /dev/videoN, so a camera node
+stays out of the broker.
+
+Call it for a desktop Linux build that compiled V4L2 in, then fall
+through to AddStandardGpuPermissions() so the DRM render nodes are
+still brokered. Chromecast already adds the V4L2 paths in the branch
+above; the else-if avoids listing them twice. UseV4L2Codec() is false
+when USE_V4L2_CODEC is unset, so a VA-API x86_64 build is unchanged.
+
+--- a/content/common/gpu_pre_sandbox_hook_linux.cc
++++ b/content/common/gpu_pre_sandbox_hook_linux.cc
+@@ -666,7 +666,13 @@
+       AddChromecastArmGpuPermissions(&permissions);
+       return permissions;
+     }
++  } else if (UseV4L2Codec(options)) {
++    // Desktop Linux. The GPU process opens the codec nodes. The allowlist
++    // is the ChromeOS names (/dev/video-decN, /dev/media-decN,
++    // /dev/video-encN), which a udev rule points at the platform devices.
++    // Fall through so DRM render nodes are still brokered.
++    AddV4L2GpuPermissions(&permissions, options);
+   }
+ 
+   AddStandardGpuPermissions(&permissions);
+   return permissions;
