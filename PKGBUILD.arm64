@@ -71,7 +71,7 @@ declare -gA _system_libs=(
   [flac]=flac
   [fontconfig]=fontconfig
   [freetype]=freetype2
-  [harfbuzz-ng]=harfbuzz
+  [harfbuzz]=harfbuzz
   #[icu]=icu
   #[jsoncpp]=jsoncpp  # needs libstdc++
   #[libaom]=aom
@@ -350,7 +350,7 @@ EOF
     find "third_party/$_lib" -type f \
       \! -path "third_party/$_lib/chromium/*" \
       \! -path "third_party/$_lib/google/*" \
-      \! -path "third_party/harfbuzz-ng/utils/hb_scoped.h" \
+      \! -path "third_party/harfbuzz/utils/hb_scoped.h" \
       \! -regex '.*\.\(gn\|gni\|isolate\)' \
       -delete
   done
