@@ -309,6 +309,15 @@ EOF
   # not a file in this repo; the gclient path applied *.patch instead.
   local _patch
   for _patch in "$startdir"/*.patch; do
+    case "$(basename "$_patch")" in
+      compiler-rt-adjust-paths.patch)
+        # Chromium 148 looks up libclang_rt.builtins.a under
+        # <triple>/ with an empty suffix. Clang 23 ships that name.
+        # This patch adds -aarch64 and no longer applies.
+        echo "Skipping $(basename "$_patch")"
+        continue
+        ;;
+    esac
     echo "Applying $(basename "$_patch")..."
     patch -Np1 --forward -i "$_patch"
   done
