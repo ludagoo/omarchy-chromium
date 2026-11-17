@@ -53,7 +53,7 @@ The encoder index comes from `/usr/lib/chromium/chromium-v4l2-enc-index`. It tak
 
 The symlinks do not change the target mode. The nodes are `root:video` mode `0660` with the seat `uaccess` ACL. The rules add `TAG+="uaccess"` as well. The kiosk user is in group `video`. v4l2loopback cameras are not matched: their sysfs name is not `avd` or `apple-ave`.
 
-`chromium-v4l2.install` runs `udevadm control --reload-rules` and `udevadm trigger` for `video4linux` and `media` on install, upgrade, and removal.
+`chromium-v4l2.install` reloads udev and runs `udevadm trigger --action=add` for `video4linux` and `media` on install, upgrade, and removal. The rules match `ACTION=="add"`. A trigger without `--action=add` sends `change` and does not create the symlinks. Checked on the Studio: after `--action=add`, `/dev/video-dec0` points at `video0` and `/dev/media-dec0` points at `media0`.
 
 Checked on the Studio before the build: `/dev/video0` is `ATTR{name}=="avd"` at `287080000.avd`, and `/dev/media0` is `ATTR{model}=="avd"`. AVE is not bound on this firmware. The expected runtime result is an empty encoder list and a browser that still plays and joins a meeting.
 
