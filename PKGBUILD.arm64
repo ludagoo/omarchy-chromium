@@ -548,6 +548,12 @@ build() {
   # https://crbug.com/957519#c122
   CXXFLAGS=${CXXFLAGS/-Wp,-D_GLIBCXX_ASSERTIONS}
 
+  # makepkg.conf sets -march=armv8-a. That is appended after libyuv's
+  # -march=armv8-a+dotprod+i8mm and clang keeps the last -march, so udot
+  # fails to assemble. Let the Chromium build files choose the march.
+  CFLAGS=${CFLAGS/-march=armv8-a}
+  CXXFLAGS=${CXXFLAGS/-march=armv8-a}
+
   gn gen out/aarch64 --args="${_flags[*]}"
   # Leave about two cores free on the 8 vCPU build VM.
   ninja -j6 -C out/aarch64 chrome chrome_sandbox chromedriver.unstripped
