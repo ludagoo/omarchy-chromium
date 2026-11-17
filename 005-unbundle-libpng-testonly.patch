@@ -1,0 +1,18 @@
+From: Lucas Goossen <lucas.goossen@hey.com>
+Subject: Add libpng_for_testonly to the unbundled libpng target
+
+Chromium 148 split test users onto //third_party/libpng:libpng_for_testonly.
+build/linux/unbundle/libpng.gn was not updated, so gn gen fails when libpng
+is a system library. The group matches third_party/libpng/BUILD.gn.
+
+--- a/build/linux/unbundle/libpng.gn
++++ b/build/linux/unbundle/libpng.gn
+@@ -20,3 +20,8 @@ source_set("libpng") {
+   deps = [ ":libpng_shim" ]
+   public_configs = [ ":libpng_config" ]
+ }
++
++group("libpng_for_testonly") {
++  testonly = true
++  public_deps = [ ":libpng" ]
++}
