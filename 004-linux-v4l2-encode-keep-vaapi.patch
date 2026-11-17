@@ -1,0 +1,102 @@
+diff --git a/media/gpu/BUILD.gn b/media/gpu/BUILD.gn
+--- a/media/gpu/BUILD.gn
++++ b/media/gpu/BUILD.gn
+@@ -105,8 +105,11 @@
+   libs = []
+   ldflags = []
+ 
+-  # V4L2 and VAAPI for video acceleration should not be enabled simultaneously.
+-  assert(!(use_v4l2_codec && use_vaapi))
++  # SmartRoom: VA-API and V4L2 are both linked. Upstream forbids this because
++  # the decoder pipeline is #if USE_VAAPI / #elif USE_V4L2, so with both flags
++  # set the decoder stays on VA-API (libva-v4l2-request). The encoder factory
++  # is patched to try the stateful V4L2 encoder first, then VA-API. Do not
++  # flip the decoder #if order or libva-v4l2-request stops being used.
+ 
+   if (use_linux_video_acceleration) {
+     public_deps += [
+diff --git a/media/gpu/chromeos/BUILD.gn b/media/gpu/chromeos/BUILD.gn
+--- a/media/gpu/chromeos/BUILD.gn
++++ b/media/gpu/chromeos/BUILD.gn
+@@ -7,8 +7,8 @@
+ import("//testing/test.gni")
+ import("//third_party/protobuf/proto_library.gni")
+ 
+-# V4L2 and VAAPI for video acceleration should not be enabled simultaneously.
+-assert(!(use_v4l2_codec && use_vaapi))
++# SmartRoom: see media/gpu/BUILD.gn. Both flags are set on purpose.
++assert(use_v4l2_codec || use_vaapi)
+ 
+ assert(use_linux_video_acceleration)
+ 
+diff --git a/media/gpu/gpu_video_encode_accelerator_factory.cc b/media/gpu/gpu_video_encode_accelerator_factory.cc
+--- a/media/gpu/gpu_video_encode_accelerator_factory.cc
++++ b/media/gpu/gpu_video_encode_accelerator_factory.cc
+@@ -44,7 +44,8 @@
+ #endif
+ #if BUILDFLAG(USE_V4L2_CODEC)
+ #include "media/gpu/v4l2/v4l2_video_encode_accelerator.h"
+-#elif BUILDFLAG(USE_VAAPI)
++#endif
++#if BUILDFLAG(USE_VAAPI)
+ #include "media/gpu/vaapi/vaapi_video_encode_accelerator.h"
+ #endif
+ #if BUILDFLAG(IS_FUCHSIA)
+@@ -56,16 +57,21 @@
+ namespace {
+ #if BUILDFLAG(USE_V4L2_CODEC)
+ std::unique_ptr<VideoEncodeAccelerator> CreateV4L2VEA() {
+-#if BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX)
++  // Same runtime gate as VaapiVideoEncodeAccelerator on desktop Linux.
++  // Enable with --enable-features=AcceleratedVideoEncoder.
++  if (!base::FeatureList::IsEnabled(kAcceleratedVideoEncodeLinux)) {
++    return nullptr;
++  }
++#endif  // BUILDFLAG(IS_LINUX)
+   // TODO(crbug.com/901264): Encoders use hack for passing offset within
+-  // a DMA-buf, which is not supported upstream.
++  // a DMA-buf, which is not supported upstream. SmartRoom still needs this
++  // on Linux for Aurora's stateful AVE V4L2 mem2mem encoder.
+   return base::WrapUnique<VideoEncodeAccelerator>(
+       new V4L2VideoEncodeAccelerator(base::MakeRefCounted<V4L2Device>()));
+-#else
+-  return nullptr;
+-#endif
+ }
+-#elif BUILDFLAG(USE_VAAPI)
++#endif  // BUILDFLAG(USE_V4L2_CODEC)
++#if BUILDFLAG(USE_VAAPI)
+ std::unique_ptr<VideoEncodeAccelerator> CreateVaapiVEA() {
+ #if BUILDFLAG(IS_LINUX)
+   if (!base::FeatureList::IsEnabled(kAcceleratedVideoEncodeLinux)) {
+@@ -167,10 +173,13 @@
+     const gpu::GpuDriverBugWorkarounds& gpu_workarounds,
+     const gpu::GPUInfo::GPUDevice& gpu_device) {
+   std::vector<VEAFactoryFunction> funcs;
++#if BUILDFLAG(USE_V4L2_CODEC)
++  // Prefer the stateful V4L2 encoder. GetSupportedProfiles() is empty when
++  // no mem2mem encoder node exists, and the factory then tries the next one.
++  funcs.push_back(base::BindRepeating(&CreateV4L2VEA));
++#endif
+ #if BUILDFLAG(USE_VAAPI)
+   funcs.push_back(base::BindRepeating(&CreateVaapiVEA));
+-#elif BUILDFLAG(USE_V4L2_CODEC)
+-  funcs.push_back(base::BindRepeating(&CreateV4L2VEA));
+ #endif
+ 
+ #if BUILDFLAG(IS_ANDROID)
+diff --git a/media/gpu/v4l2/BUILD.gn b/media/gpu/v4l2/BUILD.gn
+--- a/media/gpu/v4l2/BUILD.gn
++++ b/media/gpu/v4l2/BUILD.gn
+@@ -76,7 +76,9 @@
+     ]
+   }
+ 
+-  if (is_chromeos) {
++  # SmartRoom: stateful encode on Linux, not only ChromeOS. The DMA-buf
++  # data_offset hack (crbug.com/901264) still applies; decode stays on VA-API.
++  if (is_chromeos || is_linux) {
+     sources += [
+       # TODO(crbug.com/901264): Encoders use hack for passing offset
+       # within a DMA-buf, which is not supported upstream.

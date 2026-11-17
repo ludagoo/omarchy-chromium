@@ -1,17 +1,22 @@
 # Maintainer: Helmut Januschka <helmut@januschka.com>
 # Maintainer: David Heinemeier Hansson <david@hey.com>
 
-pkgname=omarchy-chromium
-pkgver=145.0.7632.75
-pkgrel=4
+pkgname=omarchy-chromium-smartroom-v4l2
+pkgver=148.0.7778.96
+pkgrel=23
 _launcher_ver=8
 _manual_clone=0
 _system_clang=1
-_use_chromium_src=1  # Use official chromium source checkout
+# Official release tarball (not a gclient checkout) and a local toolchain.
+# Omarchy's RBE is not available on the SmartRoom build VM.
+_use_chromium_src=0
 _chromium_upstream_src="$HOME/omarchy-chromium-src"  # Path to chromium checkout (change to your path)
 _skip_build=${SKIP_BUILD:-0}  # Set to 1 to skip build (for packaging pre-built binaries)
-pkgdesc="A web browser built for speed, simplicity, and security, with patches for Omarchy"
+pkgdesc="Omarchy Chromium 148 with V4L2 encode and VA-API decode, for SmartRoom Studio tests"
 arch=('x86_64' 'aarch64')  # Include x86_64 to allow cross-compilation
+provides=('chromium' 'omarchy-chromium')
+conflicts=('chromium' 'omarchy-chromium' 'omarchy-chromium-bin')
+replaces=('omarchy-chromium-bin')
 url="https://github.com/omacom-io/omarchy-chromium"
 license=('BSD-3-Clause')
 depends=('gtk3' 'nss' 'alsa-lib' 'xdg-utils' 'libxss' 'libcups' 'libgcrypt'
@@ -43,7 +48,7 @@ else
           increase-fortify-level.patch
           use-oauth2-client-switches-as-default.patch
           chromium-launcher.sh)
-  sha256sums=('8cd37b224dba4fc5e3c8ac98cc278d17a713a3b5a2f1dbb241ad94caca83d630'
+  sha256sums=('694d4e0269e11056c6dff748da7e8354bfbf90da7ce8f7467a0acfe2994a8688'
               '213e50f48b67feb4441078d50b0fd431df34323be15be97c55302d3fdac4483a'
               '11a96ffa21448ec4c63dd5c8d6795a1998d8e5cd5a689d91aea4d2bdd13fb06e'
               'a6507371588ed4d87d6501220249264abfbcd814771cc1ba351e0ac6cc987400'
@@ -298,38 +303,26 @@ EOF
     third_party/blink/renderer/core/xml/parser/xml_document_parser.cc \
     third_party/libxml/chromium/*.cc
 
-  # Use the --oauth2-client-id= and --oauth2-client-secret= switches for
-  # setting GOOGLE_DEFAULT_CLIENT_ID and GOOGLE_DEFAULT_CLIENT_SECRET at
-  # runtime -- this allows signing into Chromium without baked-in values
-  patch -Np1 -i ../use-oauth2-client-switches-as-default.patch
-
-  # Upstream fixes
-
-  # Fixes from Gentoo
-  patch -Np1 -i ../chromium-138-nodejs-version-check.patch
-
-  # Allow libclang_rt.builtins from compiler-rt >= 16 to be used
-  patch -Np1 -i ../compiler-rt-adjust-paths.patch
-
-  # Increase _FORTIFY_SOURCE level to match Arch's default flags
-  patch -Np1 -i ../increase-fortify-level.patch
-
-  # Add theme command-line switches support
-  patch -Np1 -i ../omarchy-theme-switcher.patch
-
-  # add patch for policy reloading
-  patch -Np1 -i ../omarchy-policy-reload.patch
-
-  patch -Np1 -i ../widevine-arm64-support.patch
+  # Patches live next to this PKGBUILD. Alphabetical order applies
+  # 001, 002, 003, then 004-linux-v4l2-encode-keep-vaapi.patch.
+  # The tarball path used to name omarchy-theme-switcher.patch, which is
+  # not a file in this repo; the gclient path applied *.patch instead.
+  local _patch
+  for _patch in "$startdir"/*.patch; do
+    echo "Applying $(basename "$_patch")..."
+    patch -Np1 --forward -i "$_patch"
+  done
 
   # Fixes for building with libstdc++ instead of libc++
 
   # Link to system tools required by the build
   if (( ! _manual_clone )); then
-    mkdir third_party/node/linux/node-linux-x64/bin
-    ln -s /usr/bin/node third_party/node/linux/node-linux-x64/bin/
+    # node.gni hardcodes linux/node-linux-x64 even on aarch64 hosts.
+    mkdir -p third_party/node/linux/node-linux-x64/bin
+    ln -sfn /usr/bin/node third_party/node/linux/node-linux-x64/bin/node
   fi
-  ln -s /usr/bin/java third_party/jdk/current/bin/
+  mkdir -p third_party/jdk/current/bin
+  ln -sfn /usr/bin/java third_party/jdk/current/bin/java
 
   if (( !_system_clang )); then
     # Use prebuilt rust as system rust cannot be used due to the error:
@@ -465,6 +458,21 @@ build() {
     )
   fi
 
+  # Keep in sync with chromium.args.arm64.gn. The tarball path does not read
+  # that file; the gclient path does. Reasons are documented there.
+  _flags+=(
+    'use_v4l2_codec=true'
+    'use_vaapi=true'
+    'use_remoteexec=false'
+    'use_siso=false'
+    'use_thin_lto=false'
+    'is_cfi=false'
+    'chrome_pgo_phase=0'
+    'concurrent_links=1'
+    'target_cpu="arm64"'
+    'target_os="linux"'
+  )
+
   # Facilitate deterministic builds (taken from build/config/compiler/BUILD.gn)
   CFLAGS+='   -Wno-builtin-macro-redefined'
   CXXFLAGS+=' -Wno-builtin-macro-redefined'
@@ -493,7 +501,8 @@ build() {
   CXXFLAGS=${CXXFLAGS/-Wp,-D_GLIBCXX_ASSERTIONS}
 
   gn gen out/aarch64 --args="${_flags[*]}"
-  ninja -C out/aarch64 chrome chrome_sandbox chromedriver.unstripped
+  # Leave about two cores free on the 8 vCPU build VM.
+  ninja -j6 -C out/aarch64 chrome chrome_sandbox chromedriver.unstripped
 }
 
 package() {
