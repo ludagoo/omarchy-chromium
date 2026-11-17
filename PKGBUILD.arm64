@@ -340,6 +340,13 @@ EOF
 
     # To link to rust libraries we need to compile with prebuilt clang
     ./tools/clang/scripts/update.py
+  else
+    # Ninja lists //third_party/rust-toolchain/bin/rustc as an input even
+    # when rust_sysroot_absolute points at the system toolchain.
+    local _rust_sysroot
+    _rust_sysroot="$(rustc --print sysroot)"
+    mkdir -p third_party/rust-toolchain/bin
+    ln -sfn "${_rust_sysroot}/bin/rustc" third_party/rust-toolchain/bin/rustc
   fi
 
   # Remove bundled libraries for which we will use the system copies; this
@@ -461,7 +468,7 @@ build() {
     export RUSTC_BOOTSTRAP=1
 
     _flags+=(
-      'rust_sysroot_absolute="/usr"'
+      "rust_sysroot_absolute=\"$(rustc --print sysroot)\""
       'rust_bindgen_root="/usr"'
       "rustc_version=\"$(rustc --version)\""
     )
