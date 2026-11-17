@@ -33,7 +33,7 @@ Chromium 148.0.7778.96 will not compile VA-API and V4L2 together:
 
 `004-linux-v4l2-encode-keep-vaapi.patch` removes the mutual-exclusion asserts, builds the stateful encoder on Linux, and registers it ahead of VA-API. On Linux the V4L2 encoder is created only when `AcceleratedVideoEncoder` is enabled, the same gate VA-API encode already uses. `GetSupportedProfiles()` is empty when no mem2mem encoder node exists, and the factory tries VA-API next.
 
-The decoder pipeline is `#if USE_VAAPI` / `#elif USE_V4L2_CODEC`. With both flags set it stays on VA-API, so the libva-v4l2-request path is unchanged. The V4L2 stateless decoder is compiled and not selected. Do not reorder that `#if` or VA-API decode goes away. `007-v4l2-vaapi-image-processor.patch` does the same for the LibYUV and GL image-processor test helpers: those function bodies exist only in the V4L2-only branch, so with both flags the helpers return nullptr.
+The decoder pipeline is `#if USE_VAAPI` / `#elif USE_V4L2_CODEC`. With both flags set it stays on VA-API, so the libva-v4l2-request path is unchanged. The V4L2 stateless decoder is compiled and not selected. Do not reorder that `#if` or VA-API decode goes away. `007-v4l2-vaapi-image-processor.patch` does the same for the LibYUV and GL image-processor test helpers: those function bodies exist only in the V4L2-only branch, so with both flags the helpers return nullptr. `008-fourcc-vaapi-and-v4l2.patch` compiles both `FromVAFourCC` and `FromV4L2PixFmt`. The old `#elif` dropped the VA-API conversion whenever `use_v4l2_codec` was set.
 
 ## Runtime flags for the Room Controller
 
