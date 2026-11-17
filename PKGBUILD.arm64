@@ -349,6 +349,24 @@ EOF
     ln -sfn "${_rust_sysroot}/bin/rustc" third_party/rust-toolchain/bin/rustc
   fi
 
+  if [[ "$(uname -m)" == "aarch64" ]]; then
+    # The lite tarball's esbuild is x86-64. The vendored JS refuses a
+    # different binary version, so fetch the matching linux-arm64 build.
+    local _esbuild_ver _esbuild_tmp
+    _esbuild_ver=$(python3 -c 'import json; print(json.load(open("third_party/devtools-frontend/src/node_modules/esbuild/package.json"))["version"])')
+    _esbuild_tmp=$(mktemp -d)
+    curl -fsSL "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-${_esbuild_ver}.tgz" \
+      -o "${_esbuild_tmp}/esbuild.tgz"
+    tar -xzf "${_esbuild_tmp}/esbuild.tgz" -C "${_esbuild_tmp}"
+    install -m755 "${_esbuild_tmp}/package/bin/esbuild" \
+      third_party/devtools-frontend/src/third_party/esbuild/esbuild
+    rm -rf "${_esbuild_tmp}"
+    # cipd gperf is also x86-64. System gperf is on PATH.
+    if [[ -d third_party/gperf/cipd/bin ]]; then
+      ln -sfn /usr/bin/gperf third_party/gperf/cipd/bin/gperf
+    fi
+  fi
+
   # Remove bundled libraries for which we will use the system copies; this
   # *should* do what the remove_bundled_libraries.py script does, with the
   # added benefit of not having to list all the remaining libraries
