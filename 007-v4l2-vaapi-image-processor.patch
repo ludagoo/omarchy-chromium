@@ -1,0 +1,28 @@
+When both USE_VAAPI and USE_V4L2_CODEC are set, the LibYUV and GL image-processor helpers exist only in the V4L2-only branch. The test wrappers return nullptr in that case.
+--- a/media/gpu/chromeos/image_processor_factory.cc	2026-11-17 02:15:20.237503968 +0000
++++ b/media/gpu/chromeos/image_processor_factory.cc	2026-11-17 02:15:20.237556926 +0000
+@@ -370,10 +370,15 @@
+     scoped_refptr<base::SequencedTaskRunner> client_task_runner,
+     PickFormatCB out_format_picker,
+     ImageProcessor::ErrorCB error_cb) {
++#if !BUILDFLAG(USE_VAAPI)
+   return CreateLibYUVImageProcessorWithInputCandidates(
+       input_candidates, input_visible_rect, output_size,
+       VideoFrame::STORAGE_MAPPABLE_SHARED_IMAGE, client_task_runner,
+       out_format_picker, error_cb);
++#else
++  // Compiled only in the V4L2-only branch. Chrome stays on VA-API here.
++  return nullptr;
++#endif
+ }
+ 
+ std::unique_ptr<ImageProcessor>
+@@ -385,7 +390,7 @@
+     scoped_refptr<base::SequencedTaskRunner> client_task_runner,
+     PickFormatCB out_format_picker,
+     ImageProcessor::ErrorCB error_cb) {
+-#if defined(ARCH_CPU_ARM_FAMILY)
++#if defined(ARCH_CPU_ARM_FAMILY) && !BUILDFLAG(USE_VAAPI)
+   return CreateGLImageProcessorWithInputCandidates(
+       input_candidates, input_visible_rect, output_size,
+       VideoFrame::STORAGE_MAPPABLE_SHARED_IMAGE, client_task_runner,
