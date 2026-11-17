@@ -560,8 +560,12 @@ build() {
   CXXFLAGS=${CXXFLAGS/-march=armv8-a}
 
   gn gen out/aarch64 --args="${_flags[*]}"
-  # Leave two cores for the rest of the machine. Floor at 1.
-  local _jobs=$(( $(nproc) - 2 ))
+  # Leave two cores for the rest of the machine. NINJA_JOBS overrides that
+  # when another compile is already using the machine. Floor at 1.
+  local _jobs="${NINJA_JOBS:-}"
+  if [[ -z $_jobs ]]; then
+    _jobs=$(( $(nproc) - 2 ))
+  fi
   if (( _jobs < 1 )); then
     _jobs=1
   fi
