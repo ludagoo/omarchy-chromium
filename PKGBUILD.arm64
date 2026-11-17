@@ -361,6 +361,18 @@ EOF
     install -m755 "${_esbuild_tmp}/package/bin/esbuild" \
       third_party/devtools-frontend/src/third_party/esbuild/esbuild
     rm -rf "${_esbuild_tmp}"
+    # Rollup's optional native binding is vendored only for linux-x64.
+    local _rollup_ver _rollup_tmp
+    _rollup_ver=$(python3 -c 'import json; print(json.load(open("third_party/devtools-frontend/src/node_modules/rollup/package.json"))["optionalDependencies"]["@rollup/rollup-linux-arm64-gnu"])')
+    _rollup_tmp=$(mktemp -d)
+    curl -fsSL "https://registry.npmjs.org/@rollup/rollup-linux-arm64-gnu/-/rollup-linux-arm64-gnu-${_rollup_ver}.tgz" \
+      -o "${_rollup_tmp}/rollup.tgz"
+    tar -xzf "${_rollup_tmp}/rollup.tgz" -C "${_rollup_tmp}"
+    rm -rf third_party/devtools-frontend/src/node_modules/@rollup/rollup-linux-arm64-gnu
+    mkdir -p third_party/devtools-frontend/src/node_modules/@rollup
+    mv "${_rollup_tmp}/package" \
+      third_party/devtools-frontend/src/node_modules/@rollup/rollup-linux-arm64-gnu
+    rm -rf "${_rollup_tmp}"
     # cipd gperf is also x86-64. System gperf is on PATH.
     if [[ -d third_party/gperf/cipd/bin ]]; then
       ln -sfn /usr/bin/gperf third_party/gperf/cipd/bin/gperf
