@@ -40,8 +40,9 @@ each slice in its own request and setting
 V4L2_BUF_FLAG_M2M_HOLD_CAPTURE_BUF on every bitstream buffer but the
 last, so all slices write the same CAPTURE buffer. Chromium does not
 use that flag, so after the previous change a multi-slice picture on a
-slice-based device fails. Many encoders, including WebRTC's hardware
-encoders and x264 with --slices, produce such pictures.
+slice-based device fails. Encoders produce such pictures when asked
+for several slices or a maximum slice size (x264 --slices,
+--slice-max-size), which real-time senders use.
 
 For a slice-based device the delegate now keeps every slice of the
 picture (bytes, slice parameters, prediction weights). At SubmitDecode:
@@ -65,9 +66,10 @@ Frame-based devices and single-slice pictures do not change.
 
 Bug: None
 Test: media_unittests --gtest_filter=V4L2H264SliceTest.*
-Test: x264 --slices 4 clip and WebRTC loopback (H.264 from Chrome's
-      encoder, several slices per picture) on Apple AVD (Linux arm64):
-      every frame decodes, no drops
+Test: H.264 High 1080p clips with 4 slices and with 6 to 29 slices
+      per picture (x264) on Apple AVD (Linux arm64): every picture
+      decodes on V4L2VideoDecoder; before, multi-slice pictures were
+      rejected and playback fell back to software
 ```
 
 ## Tests
@@ -78,7 +80,7 @@ Test: x264 --slices 4 clip and WebRTC loopback (H.264 from Chrome's
 
 ## Evidence from the 148 port
 
-On 148 (multi-slice branch): 4-slice clip 120 frames, 6 dropped; 6-29 slices per picture, 120 frames, 8 dropped; hold_capture=1 capabilities=253. WebRTC loopback 1280x720 on V4L2VideoDecoder, 268 frames, 0 dropped.
+On 148 (multi-slice branch): 4-slice clip 120 frames, 6 dropped; 6-29 slices per picture, 120 frames, 8 dropped (the video element's count at the end of a 4 s clip); hold_capture=1 capabilities=253, only after S_FMT. A WebRTC loopback (1280x720, V4L2VideoDecoder, 268 frames, 0 dropped) did not use this path: OpenH264 sent one slice per picture.
 
 ## Results on main
 

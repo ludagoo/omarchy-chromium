@@ -1,4 +1,4 @@
-From 1f1221b9944619b6604178f20ba8c5be1f8ba650 Mon Sep 17 00:00:00 2001
+From 409ef509ff51e825a48a37048fbaceecd3051a02 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:18:22 -0300
 Subject: [PATCH 6/6] media/gpu/v4l2: Send HEVC slice parameters to stateless

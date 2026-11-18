@@ -25,13 +25,17 @@ CLS = [
      "0 dropped, about 0.9 ms per frame."),
     ("A4", "h264-reference-dpb", "4.txt", "a", 4, "On top of A3.",
      "media_unittests --gtest_filter='V4L2H264SliceTest.*'",
-     "On 148 (patch 021, 2d816dd): all eight test clips stay on V4L2VideoDecoder to "
-     "the end (600 frames); before, H.264 High with B-frames hit the AVD watchdog."),
+     "On 148 (2d816dd): all eight test clips stay on V4L2VideoDecoder to the end "
+     "(600 frames), with no AVD watchdog in the kernel log. Before, a non-reference "
+     "picture kept for display could sit in front of a reference; AVD sizes its table "
+     "from the ACTIVE count, the slice's index fell off the end, and the decoder hung."),
     ("A5", "h264-multi-slice", "5.txt", "a", 5, "On top of A4.",
      "media_unittests --gtest_filter='V4L2H264SliceTest.*'",
      "On 148 (multi-slice branch): 4-slice clip 120 frames, 6 dropped; 6-29 slices "
-     "per picture, 120 frames, 8 dropped; hold_capture=1 capabilities=253. WebRTC "
-     "loopback 1280x720 on V4L2VideoDecoder, 268 frames, 0 dropped."),
+     "per picture, 120 frames, 8 dropped (the video element's count at the end of "
+     "a 4 s clip); hold_capture=1 capabilities=253, only after S_FMT. A WebRTC "
+     "loopback (1280x720, V4L2VideoDecoder, 268 frames, 0 dropped) did not use this "
+     "path: OpenH264 sent one slice per picture."),
     ("A6", "hevc-slice-params", "6.txt", "a", 6,
      "Independent of the H.264 changes (separate delegate).",
      "media_unittests --gtest_filter='V4L2HevcSliceTest.*'",

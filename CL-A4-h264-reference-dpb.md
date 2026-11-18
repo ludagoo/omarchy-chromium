@@ -46,8 +46,10 @@ receiving every picture, ACTIVE only for references, as before.
 
 Bug: None
 Test: media_unittests --gtest_filter=V4L2H264SliceTest.*
-Test: H.264 High clips with B-frames on Apple AVD (Linux arm64): no
-      corrupted P/B frames, no rejected requests
+Test: H.264 High 1080p and 2160p clips on Apple AVD (Linux arm64):
+      play to the end on V4L2VideoDecoder; before, the decoder hung
+      once a non-reference picture kept for display sat in front of a
+      reference in the DPB
 ```
 
 ## Tests
@@ -58,7 +60,7 @@ Test: H.264 High clips with B-frames on Apple AVD (Linux arm64): no
 
 ## Evidence from the 148 port
 
-On 148 (patch 021, 2d816dd): all eight test clips stay on V4L2VideoDecoder to the end (600 frames); before, H.264 High with B-frames hit the AVD watchdog.
+On 148 (2d816dd): all eight test clips stay on V4L2VideoDecoder to the end (600 frames), with no AVD watchdog in the kernel log. Before, a non-reference picture kept for display could sit in front of a reference; AVD sizes its table from the ACTIVE count, the slice's index fell off the end, and the decoder hung.
 
 ## Results on main
 
