@@ -1,0 +1,29 @@
+A killed tsc leaves tsconfig_*.tsbuildinfo behind. The next run sees
+that file, decides the inputs are unchanged, and exits 0 without
+writing the .js and .d.ts outputs. GN then treats the action as done.
+Later targets fail with TS2307 because the path mapping points at an
+empty tsc/ directory.
+
+ts_library.py already deletes the .tsbuildinfo after a successful
+tsc, because GN decides freshness. Delete it before tsc as well, so a
+file left by a killed compiler cannot suppress emit. This showed up
+when the Studio rebooted during the TypeScript actions.
+
+--- a/tools/typescript/ts_library.py
++++ b/tools/typescript/ts_library.py
+@@ -275,6 +275,15 @@
+           if os.path.exists(to_check):
+             os.remove(to_check)
+ 
++  # A killed tsc can leave .tsbuildinfo without outputs. The next tsc
++  # then exits 0 and emits nothing. GN already decides which target is
++  # dirty, so the incremental file is only a hazard. The finally block
++  # below removes it again after a successful run.
++  if args.composite:
++    tsbuildinfo_path = os.path.join(args.gen_dir, tsbuildinfo_name)
++    if os.path.exists(tsbuildinfo_path):
++      os.remove(tsbuildinfo_path)
++
+   try:
+     node.RunNode([
+         node_modules.PathToTypescript(), '--project',

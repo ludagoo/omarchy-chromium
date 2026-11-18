@@ -37,6 +37,8 @@ The arm64 package does not depend on libva. ffmpeg on the Studio may still pull 
 
 `013-v4l2-decode-feature-default.patch` defaults `kAcceleratedVideoDecodeLinux` (`AcceleratedVideoDecoder`) on when `USE_VAAPI` or `USE_V4L2_CODEC` is set. `AcceleratedVideoEncoder` stays off unless the caller enables it.
 
+`014-tsbuildinfo-before-tsc.patch` deletes `tsconfig_*.tsbuildinfo` before `tsc` runs. A killed compiler leaves that file, and the next `tsc` then exits 0 without writing outputs. GN marks the action done, and a later target fails with `TS2307` because `tsc/` is empty. The Studio reboots during this build, which is how it showed up.
+
 Compile fixes kept from the parent branch: `005-unbundle-libpng-testonly.patch`, `006-rust-1.99-bytemuck.patch`, `009-glibc-2.43-sys-seccomp.patch`, `010-rust-1.99-qr-code.patch`, `glibc-2.42-baud-rate-fix.patch`, plus the Omarchy theme patches, Widevine, oauth, fortify, and the nodejs check. `compiler-rt-adjust-paths.patch` is skipped. It does not apply on Clang 23.
 
 ## udev
