@@ -1,0 +1,23 @@
+Derive the second plane of a single-buffer P010 capture format.
+
+V4L2 P010 is one buffer with two color planes, the same shape as NV12 with
+16-bit samples. Chromium only invented the chroma plane for NV12, so a P010
+buffer never became a frame and 10-bit VP9 stayed at time 0. The chroma
+plane now uses the same stride and half the height. bytesperline is already
+in bytes. Any stateless driver that exports P010 as one plane needs this.
+It is not specific to Apple.
+
+--- a/media/gpu/v4l2/v4l2_utils.cc	2026-11-18 13:37:58.529859101 -0300
++++ b/media/gpu/v4l2/v4l2_utils.cc	2026-11-18 13:39:17.369585452 -0300
+@@ -278,8 +278,9 @@
+     const size_t y_stride_abs = static_cast<size_t>(y_stride);
+     switch (pix_fmt) {
+       case V4L2_PIX_FMT_NV12:
+-        // The stride of UV is the same as Y in NV12.
+-        // The height is half of Y plane.
++      case V4L2_PIX_FMT_P010:
++        // UV has the same stride as Y and half the height. P010 is the
++        // 16-bit version of that layout; bytesperline is already in bytes.
+         planes.emplace_back(y_stride, y_stride_abs * pix_mp.height,
+                             y_stride_abs * pix_mp.height / 2);
+         DCHECK_EQ(2u, planes.size());
