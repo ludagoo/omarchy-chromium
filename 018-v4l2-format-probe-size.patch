@@ -1,0 +1,50 @@
+Tell the format probe the picture size, and that H.264 is progressive.
+
+Chromium set the coded queue to an empty size and sent an H.264 sequence
+header with no flags. On AVD the empty size becomes 64x64, so the HEVC
+probe sequence for a real picture is larger than the coded format and is
+rejected. The H.264 probe is rejected because the sequence does not say
+the picture is progressive (frame_mbs_only). Both fail before a frame is
+queued, and Chromium falls back to software.
+
+The coded queue now gets the visible size, and the H.264 probe sequence
+sets the progressive flag and the picture size in macroblocks. Each frame
+still sends the sequence the parser read. A driver that sizes itself from
+the coded format, or that refuses an interlaced sequence, needs the same
+values. This is not specific to Apple.
+
+diff -u a/media/gpu/v4l2/v4l2_video_decoder.cc b/media/gpu/v4l2/v4l2_video_decoder.cc
+--- a/media/gpu/v4l2/v4l2_video_decoder.cc
++++ b/media/gpu/v4l2/v4l2_video_decoder.cc
+@@ -600,9 +600,12 @@
+     input_size = GetInputBufferSizeForResolution(max_size);
+   }
+ 
+-  // Setup the input format.
+-  auto format =
+-      input_queue_->SetFormat(input_format_fourcc_, gfx::Size(), input_size);
++  // The coded queue's width and height are the picture size. Passing an
++  // empty size leaves the driver's minimum (64x64 on AVD). The format probe
++  // then sends an SPS for the real picture, and the driver rejects it as
++  // larger than the coded format.
++  auto format = input_queue_->SetFormat(input_format_fourcc_,
++                                        current_resolution_, input_size);
+   if (!format) {
+     VPLOGF(1) << "Failed to call IOCTL to set input format.";
+     return false;
+@@ -778,6 +781,15 @@
+     v4l2_h264_sps.bit_depth_luma_minus8 = (bit_depth == 10u) ? 2 : 0;
+     v4l2_h264_sps.bit_depth_chroma_minus8 = (bit_depth == 10u) ? 2 : 0;
+     v4l2_h264_sps.chroma_format_idc = 1;  // 4:2:0
++    // Progressive. AVD rejects an SPS that does not say so, and the capture
++    // formats are never enumerated. Each frame still sends its real SPS.
++    v4l2_h264_sps.flags = V4L2_H264_SPS_FLAG_FRAME_MBS_ONLY;
++    if (!size.IsEmpty()) {
++      v4l2_h264_sps.pic_width_in_mbs_minus1 = static_cast<__u16>(
++          (size.width() + 15) / 16 - 1);
++      v4l2_h264_sps.pic_height_in_map_units_minus1 = static_cast<__u16>(
++          (size.height() + 15) / 16 - 1);
++    }
+ 
+     ctrl.id = V4L2_CID_STATELESS_H264_SPS;
+     ctrl.size = sizeof(v4l2_h264_sps);
