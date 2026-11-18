@@ -1,4 +1,4 @@
-From 79134c1a2c3326b868e344a8b0ebc63b80ac6eb2 Mon Sep 17 00:00:00 2001
+From 5217cf1f3281dde31fb822f2d6e10f211b8079b5 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:17:43 -0300
 Subject: [PATCH 5/6] media/gpu/v4l2: Decode multi-slice H.264 pictures on
@@ -163,10 +163,10 @@ index 3529769..a5dd143 100644
    // with CENCV1 H264 and VP9 superframe encrypted content.
    virtual void ResumeDecoding() = 0;
 diff --git a/media/gpu/v4l2/v4l2_h264_slice.cc b/media/gpu/v4l2/v4l2_h264_slice.cc
-index 898cd66..419ce55 100644
+index 42d933f..5a3a4da 100644
 --- a/media/gpu/v4l2/v4l2_h264_slice.cc
 +++ b/media/gpu/v4l2/v4l2_h264_slice.cc
-@@ -206,4 +206,10 @@ uint32_t H264DpbEntryFlags(bool is_ref, bool long_term, bool slice_based) {
+@@ -211,4 +211,10 @@ uint32_t H264DpbEntryFlags(bool is_ref, bool long_term, bool slice_based) {
    return flags;
  }
  
@@ -178,10 +178,10 @@ index 898cd66..419ce55 100644
 +
  }  // namespace media
 diff --git a/media/gpu/v4l2/v4l2_h264_slice.h b/media/gpu/v4l2/v4l2_h264_slice.h
-index 336ed7a..a536b4c 100644
+index 16750bb..3c13f31 100644
 --- a/media/gpu/v4l2/v4l2_h264_slice.h
 +++ b/media/gpu/v4l2/v4l2_h264_slice.h
-@@ -67,6 +67,13 @@ bool FillH264SliceParams(const H264PPS* pps,
+@@ -71,6 +71,13 @@ bool FillH264SliceParams(const H264PPS* pps,
  bool H264DpbEntryIsPacked(bool is_ref, bool slice_based);
  uint32_t H264DpbEntryFlags(bool is_ref, bool long_term, bool slice_based);
  
@@ -196,10 +196,10 @@ index 336ed7a..a536b4c 100644
  
  #endif  // MEDIA_GPU_V4L2_V4L2_H264_SLICE_H_
 diff --git a/media/gpu/v4l2/v4l2_h264_slice_unittest.cc b/media/gpu/v4l2/v4l2_h264_slice_unittest.cc
-index e7e1299..47b6803 100644
+index 640723d..298cc4f 100644
 --- a/media/gpu/v4l2/v4l2_h264_slice_unittest.cc
 +++ b/media/gpu/v4l2/v4l2_h264_slice_unittest.cc
-@@ -125,4 +125,11 @@ TEST(V4L2H264SliceTest, FrameBasedDpbKeepsNonReferencesInactive) {
+@@ -137,4 +137,11 @@ TEST(V4L2H264SliceTest, FrameBasedDpbKeepsNonReferencesInactive) {
              slice_ref);
  }
  
@@ -433,7 +433,7 @@ index afefa34..3b6b63a 100644
    bool CreateDecoder();
  
 diff --git a/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc b/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc
-index 80fb89b..8f83e5a 100644
+index 6e67074..03581c8 100644
 --- a/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc
 +++ b/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc
 @@ -51,6 +51,16 @@ struct DecRefPicMarking {
@@ -470,7 +470,7 @@ index 80fb89b..8f83e5a 100644
  };
  
  void QueryH264StatelessControls(V4L2Device* device,
-@@ -96,6 +116,61 @@ void QueryH264StatelessControls(V4L2Device* device,
+@@ -102,6 +122,61 @@ void QueryH264StatelessControls(V4L2Device* device,
             << " start_code=" << priv->start_code;
  }
  
@@ -532,7 +532,7 @@ index 80fb89b..8f83e5a 100644
  class V4L2H264Picture : public H264Picture {
   public:
    explicit V4L2H264Picture(scoped_refptr<V4L2DecodeSurface> dec_surface)
-@@ -287,6 +362,8 @@ V4L2VideoDecoderDelegateH264::SubmitFrameMetadata(
+@@ -293,6 +368,8 @@ V4L2VideoDecoderDelegateH264::SubmitFrameMetadata(
    priv_->pred_weights = {};
    priv_->pred_weights_required = false;
    priv_->have_slice = false;
@@ -541,7 +541,7 @@ index 80fb89b..8f83e5a 100644
    priv_->dpb_pics.clear();
  
    struct v4l2_ext_control ctrl = {};
-@@ -341,6 +418,7 @@ V4L2VideoDecoderDelegateH264::SubmitFrameMetadata(
+@@ -347,6 +424,7 @@ V4L2VideoDecoderDelegateH264::SubmitFrameMetadata(
    SET_V4L2_SPS_FLAG_IF(direct_8x8_inference_flag,
                         V4L2_H264_SPS_FLAG_DIRECT_8X8_INFERENCE);
  #undef SET_V4L2_SPS_FLAG_IF
@@ -549,7 +549,7 @@ index 80fb89b..8f83e5a 100644
    ctrl = {};
    ctrl.id = V4L2_CID_STATELESS_H264_SPS;
    ctrl.size = sizeof(v4l2_sps);
-@@ -380,6 +458,7 @@ V4L2VideoDecoderDelegateH264::SubmitFrameMetadata(
+@@ -386,6 +464,7 @@ V4L2VideoDecoderDelegateH264::SubmitFrameMetadata(
    SET_V4L2_PPS_FLAG_IF(pic_scaling_matrix_present_flag,
                         V4L2_H264_PPS_FLAG_SCALING_MATRIX_PRESENT);
  #undef SET_V4L2_PPS_FLAG_IF
@@ -557,7 +557,7 @@ index 80fb89b..8f83e5a 100644
    ctrl = {};
    ctrl.id = V4L2_CID_STATELESS_H264_PPS;
    ctrl.size = sizeof(v4l2_pps);
-@@ -449,6 +528,8 @@ V4L2VideoDecoderDelegateH264::SubmitFrameMetadata(
+@@ -455,6 +534,8 @@ V4L2VideoDecoderDelegateH264::SubmitFrameMetadata(
      }
    }
  
@@ -566,7 +566,7 @@ index 80fb89b..8f83e5a 100644
    ctrl = {};
    ctrl.id = V4L2_CID_STATELESS_H264_SCALING_MATRIX;
    ctrl.size = sizeof(v4l2_scaling_matrix);
-@@ -644,12 +725,6 @@ H264Decoder::H264Accelerator::Status V4L2VideoDecoderDelegateH264::SubmitSlice(
+@@ -650,12 +731,6 @@ H264Decoder::H264Accelerator::Status V4L2VideoDecoderDelegateH264::SubmitSlice(
    const size_t prefix = H264StartCodePrefixSize(priv_->start_code);
  
    if (slice_based) {
@@ -579,7 +579,7 @@ index 80fb89b..8f83e5a 100644
      v4l2_ctrl_h264_slice_params slice_params = {};
      v4l2_ctrl_h264_pred_weights weights = {};
      bool pred_weights_required = false;
-@@ -661,11 +736,24 @@ H264Decoder::H264Accelerator::Status V4L2VideoDecoderDelegateH264::SubmitSlice(
+@@ -667,11 +742,24 @@ H264Decoder::H264Accelerator::Status V4L2VideoDecoderDelegateH264::SubmitSlice(
      priv_->slice_params = slice_params;
      priv_->pred_weights = weights;
      priv_->pred_weights_required = pred_weights_required;
@@ -606,7 +606,7 @@ index 80fb89b..8f83e5a 100644
    const size_t data_copy_size = payload + prefix;
    auto data_copy = base::HeapArray<uint8_t>::WithSize(data_copy_size);
    if (prefix) {
-@@ -714,11 +802,45 @@ H264Decoder::H264Accelerator::Status V4L2VideoDecoderDelegateH264::SubmitDecode(
+@@ -720,11 +808,45 @@ H264Decoder::H264Accelerator::Status V4L2VideoDecoderDelegateH264::SubmitDecode(
    QueryH264StatelessControls(device_, priv_.get());
    const bool slice_based = H264DecodeModeIsSliceBased(priv_->decode_mode);
    if (slice_based) {
@@ -654,7 +654,7 @@ index 80fb89b..8f83e5a 100644
      ctrl = {};
      ctrl.id = V4L2_CID_STATELESS_H264_SLICE_PARAMS;
      ctrl.size = sizeof(priv_->slice_params);
-@@ -771,6 +893,7 @@ void V4L2VideoDecoderDelegateH264::Reset() {
+@@ -777,6 +899,7 @@ void V4L2VideoDecoderDelegateH264::Reset() {
    priv_->pred_weights = {};
    priv_->pred_weights_required = false;
    priv_->have_slice = false;

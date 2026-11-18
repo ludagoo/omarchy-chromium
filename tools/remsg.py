@@ -26,6 +26,7 @@ for c, m in zip(commits, msgs):
         continue
     parent = git("commit-tree", f"{c}^{{tree}}", "-p", parent, env=env, inp=msg)
 old = git("rev-parse", branch)
+ref = git("symbolic-ref", "HEAD") if branch == "HEAD" else f"refs/heads/{branch}"
 if old != parent:
-    git("update-ref", f"refs/heads/{branch}", parent, old)
+    git("update-ref", ref, parent, old)
 print(branch, old[:12], "->", parent[:12])

@@ -15,11 +15,11 @@ the contributor agreement is on file (see REPORT.md).
 Files:
 
     media/gpu/v4l2/BUILD.gn                                |   3 +
-    media/gpu/v4l2/v4l2_h264_slice.cc                      | 194 +++++++++++++++++++++++++++++++++++++
-    media/gpu/v4l2/v4l2_h264_slice.h                       |  65 +++++++++++++
-    media/gpu/v4l2/v4l2_h264_slice_unittest.cc             | 109 +++++++++++++++++++++
+    media/gpu/v4l2/v4l2_h264_slice.cc                      | 199 +++++++++++++++++++++++++++++++++++++
+    media/gpu/v4l2/v4l2_h264_slice.h                       |  69 +++++++++++++
+    media/gpu/v4l2/v4l2_h264_slice_unittest.cc             | 121 ++++++++++++++++++++++
     media/gpu/v4l2/v4l2_video_decoder_backend_stateless.cc |  10 ++
-    media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc     | 143 ++++++++++++++++++++++++---
+    media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc     | 149 +++++++++++++++++++++++++--
     media/gpu/v4l2/v4l2_video_decoder_delegate_h264.h      |   3 +
 
 ## Description for Gerrit
@@ -37,12 +37,14 @@ ChromeOS decoders, and also Hantro, rkvdec, MediaTek and Tegra on
 mainline. A driver whose only mode is SLICE_BASED, such as cedrus and
 Apple's AVD, rejects the request and nothing decodes.
 
-Query the default of DECODE_MODE and START_CODE once. For a
-frame-based device nothing changes: the DPB and decode parameters are
-filled as before, the start code is the Annex-B default, and the
-DECODE_MODE control is still sent with each request.
+Ask the device once which decode modes it offers (VIDIOC_QUERYMENU)
+and which start code it defaults to. A device that offers FRAME_BASED
+keeps it, even when it also offers SLICE_BASED, so nothing changes for
+it: the DPB and decode parameters are filled as before, the start code
+is its Annex-B default, and DECODE_MODE is still sent with each
+request.
 
-For a slice-based device:
+For a device whose only mode is SLICE_BASED:
 - RequiresRefLists() returns true so H264Decoder builds
   RefPicList0/1.
 - Each slice fills v4l2_ctrl_h264_slice_params (and pred weights when
