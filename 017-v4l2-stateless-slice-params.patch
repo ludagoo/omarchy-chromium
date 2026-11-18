@@ -1,0 +1,725 @@
+Submit the V4L2 stateless controls the driver actually advertises.
+
+Chromium always told the H.264 decoder to run frame-based and always
+prefixed slices with a 3-byte Annex-B start code. Apple's AVD, and the
+other mainline stateless decoders, are slice-based and want the raw NAL
+plus V4L2_CID_STATELESS_H264_SLICE_PARAMS. The out-of-range decode mode
+fails the first frame in userspace, so Chromium falls back to FFmpeg.
+
+HEVC on AVD is frame-based, but the hardware does not parse slice
+headers. Chromium never sent V4L2_CID_STATELESS_HEVC_SLICE_PARAMS, so
+the driver queued an empty job and the frame timed out. The same slice
+parameters are what hantro, rkvdec and cedrus need. Start codes are
+prepended only when the driver says it wants Annex-B.
+
+The queried default is left in place for a frame-based device, so
+ChromeOS hardware keeps the old path. A picture with more than one
+H.264 slice on a slice-based device is rejected for now: that needs one
+media request per slice and V4L2_BUF_FLAG_M2M_HOLD_CAPTURE_BUF. The
+x264 test clips are one slice per picture. HEVC stays one request per
+picture, which is what AVD's frame-based mode asks for.
+
+VP9 profile 2 is unchanged. The init path already sets 10-bit and both
+subsampling flags; that stall needs a trace on the device.
+
+diff -ruN a/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc b/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc
+--- a/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc	2026-11-18 12:06:44.047557828 -0300
++++ b/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc	2026-11-18 12:10:06.846031369 -0300
+@@ -56,8 +56,190 @@
+ // upstream.
+ struct V4L2VideoDecoderDelegateH264Private {
+   struct v4l2_ctrl_h264_decode_params v4l2_decode_param;
++  struct v4l2_ctrl_h264_slice_params slice_params = {};
++  struct v4l2_ctrl_h264_pred_weights pred_weights = {};
++  // Pictures in the same order as v4l2_decode_param.dpb[]. Slice ref lists
++  // name these slots, not timestamps.
++  std::vector<H264Picture*> dpb_pics;
++  bool pred_weights_required = false;
++  bool have_slice = false;
++  int slice_count = 0;
++  // ChromeOS stateless decoders are frame-based and parse Annex-B themselves.
++  // Mainline decoders (AVD, hantro, rkvdec, cedrus) advertise the real mode.
++  int32_t decode_mode = V4L2_STATELESS_H264_DECODE_MODE_FRAME_BASED;
++  int32_t start_code = V4L2_STATELESS_H264_START_CODE_ANNEX_B;
++  bool controls_queried = false;
+ };
+ 
++void QueryH264StatelessControls(V4L2Device* device,
++                                V4L2VideoDecoderDelegateH264Private* priv) {
++  if (priv->controls_queried) {
++    return;
++  }
++  priv->controls_queried = true;
++
++  struct v4l2_queryctrl query = {};
++  query.id = V4L2_CID_STATELESS_H264_DECODE_MODE;
++  if (device->Ioctl(VIDIOC_QUERYCTRL, &query) == 0 &&
++      !(query.flags & V4L2_CTRL_FLAG_DISABLED)) {
++    priv->decode_mode = query.default_value;
++  }
++  query = {};
++  query.id = V4L2_CID_STATELESS_H264_START_CODE;
++  if (device->Ioctl(VIDIOC_QUERYCTRL, &query) == 0 &&
++      !(query.flags & V4L2_CTRL_FLAG_DISABLED)) {
++    priv->start_code = query.default_value;
++  }
++  VLOGF(1) << "H.264 stateless decode_mode=" << priv->decode_mode
++           << " start_code=" << priv->start_code;
++}
++
++int FindH264DpbIndex(const std::vector<H264Picture*>& dpb,
++                   const H264Picture* pic) {
++  if (!pic) {
++    return -1;
++  }
++  for (size_t i = 0; i < dpb.size(); ++i) {
++    if (dpb[i] == pic) {
++      return static_cast<int>(i);
++    }
++  }
++  return -1;
++}
++
++bool FillH264RefList(const std::vector<H264Picture*>& dpb,
++                     const H264Picture::Vector& refs,
++                     struct v4l2_h264_reference* out,
++                     int count) {
++  if (count < 0 || count > V4L2_H264_REF_LIST_LEN) {
++    return false;
++  }
++  for (int i = 0; i < count; ++i) {
++    if (i >= static_cast<int>(refs.size()) || !refs[i]) {
++      return false;
++    }
++    const int index = FindH264DpbIndex(dpb, refs[i].get());
++    if (index < 0) {
++      return false;
++    }
++    out[i].index = static_cast<__u8>(index);
++    out[i].fields = V4L2_H264_FRAME_REF;
++  }
++  return true;
++}
++
++// One slice per request. A second slice in the same picture needs
++// V4L2_BUF_FLAG_M2M_HOLD_CAPTURE_BUF and its own media request, which this
++// one-buffer surface does not do yet.
++bool FillH264SliceParams(V4L2VideoDecoderDelegateH264Private* priv,
++                         const H264PPS* pps,
++                         const H264SliceHeader* slice_hdr,
++                         const H264Picture::Vector& ref_pic_list0,
++                         const H264Picture::Vector& ref_pic_list1) {
++  if (priv->slice_count >= 1) {
++    VLOGF(1) << "Slice-based H.264 picture has more than one slice. "
++             << "Each slice needs its own request.";
++    return false;
++  }
++  if (slice_hdr->header_bit_size < 0) {
++    return false;
++  }
++
++  const int slice_type = slice_hdr->slice_type % 5;
++  struct v4l2_ctrl_h264_slice_params* slice = &priv->slice_params;
++  *slice = {};
++  // header_bit_size counts RBSP bits from the first byte of the NAL (the
++  // NAL header), with emulation-prevention bytes excluded. The kernel
++  // scanner skips those bytes itself and adds the CABAC alignment.
++  slice->header_bit_size = static_cast<__u32>(slice_hdr->header_bit_size);
++  slice->first_mb_in_slice = static_cast<__u32>(slice_hdr->first_mb_in_slice);
++  slice->slice_type = static_cast<__u8>(slice_type);
++  slice->colour_plane_id = static_cast<__u8>(slice_hdr->colour_plane_id);
++  slice->redundant_pic_cnt = static_cast<__u8>(slice_hdr->redundant_pic_cnt);
++  slice->cabac_init_idc = static_cast<__u8>(slice_hdr->cabac_init_idc);
++  slice->slice_qp_delta = static_cast<__s8>(slice_hdr->slice_qp_delta);
++  slice->slice_qs_delta = static_cast<__s8>(slice_hdr->slice_qs_delta);
++  slice->disable_deblocking_filter_idc =
++      static_cast<__u8>(slice_hdr->disable_deblocking_filter_idc);
++  slice->slice_alpha_c0_offset_div2 =
++      static_cast<__s8>(slice_hdr->slice_alpha_c0_offset_div2);
++  slice->slice_beta_offset_div2 =
++      static_cast<__s8>(slice_hdr->slice_beta_offset_div2);
++  slice->num_ref_idx_l0_active_minus1 =
++      static_cast<__u8>(slice_hdr->num_ref_idx_l0_active_minus1);
++  slice->num_ref_idx_l1_active_minus1 =
++      static_cast<__u8>(slice_hdr->num_ref_idx_l1_active_minus1);
++  if (slice_type == V4L2_H264_SLICE_TYPE_B &&
++      slice_hdr->direct_spatial_mv_pred_flag) {
++    slice->flags |= V4L2_H264_SLICE_FLAG_DIRECT_SPATIAL_MV_PRED;
++  }
++  if (slice_hdr->sp_for_switch_flag) {
++    slice->flags |= V4L2_H264_SLICE_FLAG_SP_FOR_SWITCH;
++  }
++
++  if (slice_type == V4L2_H264_SLICE_TYPE_P ||
++      slice_type == V4L2_H264_SLICE_TYPE_SP ||
++      slice_type == V4L2_H264_SLICE_TYPE_B) {
++    if (!FillH264RefList(priv->dpb_pics, ref_pic_list0, slice->ref_pic_list0,
++                         slice_hdr->num_ref_idx_l0_active_minus1 + 1)) {
++      VLOGF(1) << "H.264 L0 reference is not in the DPB";
++      return false;
++    }
++  }
++  if (slice_type == V4L2_H264_SLICE_TYPE_B) {
++    if (!FillH264RefList(priv->dpb_pics, ref_pic_list1, slice->ref_pic_list1,
++                         slice_hdr->num_ref_idx_l1_active_minus1 + 1)) {
++      VLOGF(1) << "H.264 L1 reference is not in the DPB";
++      return false;
++    }
++  }
++
++  priv->pred_weights_required = false;
++  const bool weighted =
++      (pps->weighted_pred_flag && (slice_type == V4L2_H264_SLICE_TYPE_P ||
++                                   slice_type == V4L2_H264_SLICE_TYPE_SP)) ||
++      (pps->weighted_bipred_idc == 1 && slice_type == V4L2_H264_SLICE_TYPE_B);
++  if (weighted) {
++    priv->pred_weights_required = true;
++    struct v4l2_ctrl_h264_pred_weights* weights = &priv->pred_weights;
++    *weights = {};
++    weights->luma_log2_weight_denom =
++        static_cast<__u16>(slice_hdr->luma_log2_weight_denom);
++    weights->chroma_log2_weight_denom =
++        static_cast<__u16>(slice_hdr->chroma_log2_weight_denom);
++    const int n0 = std::min(slice_hdr->num_ref_idx_l0_active_minus1 + 1, 32);
++    const int n1 = std::min(slice_hdr->num_ref_idx_l1_active_minus1 + 1, 32);
++    for (int i = 0; i < n0; ++i) {
++      weights->weight_factors[0].luma_weight[i] = static_cast<__s16>(
++          slice_hdr->pred_weight_table_l0.luma_weight[i]);
++      weights->weight_factors[0].luma_offset[i] = static_cast<__s16>(
++          slice_hdr->pred_weight_table_l0.luma_offset[i]);
++      for (int j = 0; j < 2; ++j) {
++        weights->weight_factors[0].chroma_weight[i][j] = static_cast<__s16>(
++            slice_hdr->pred_weight_table_l0.chroma_weight[i][j]);
++        weights->weight_factors[0].chroma_offset[i][j] = static_cast<__s16>(
++            slice_hdr->pred_weight_table_l0.chroma_offset[i][j]);
++      }
++    }
++    for (int i = 0; i < n1; ++i) {
++      weights->weight_factors[1].luma_weight[i] = static_cast<__s16>(
++          slice_hdr->pred_weight_table_l1.luma_weight[i]);
++      weights->weight_factors[1].luma_offset[i] = static_cast<__s16>(
++          slice_hdr->pred_weight_table_l1.luma_offset[i]);
++      for (int j = 0; j < 2; ++j) {
++        weights->weight_factors[1].chroma_weight[i][j] = static_cast<__s16>(
++            slice_hdr->pred_weight_table_l1.chroma_weight[i][j]);
++        weights->weight_factors[1].chroma_offset[i][j] = static_cast<__s16>(
++            slice_hdr->pred_weight_table_l1.chroma_offset[i][j]);
++      }
++    }
++  }
++
++  priv->have_slice = true;
++  priv->slice_count++;
++  return true;
++}
++
+ class V4L2H264Picture : public H264Picture {
+  public:
+   explicit V4L2H264Picture(scoped_refptr<V4L2DecodeSurface> dec_surface)
+@@ -182,12 +364,14 @@
+ 
+   UNSAFE_TODO(memset(priv_->v4l2_decode_param.dpb, 0,
+                      sizeof(priv_->v4l2_decode_param.dpb)));
++  priv_->dpb_pics.clear();
+   size_t i = 0;
+   for (const auto& pic : dpb) {
+     if (i >= std::size(priv_->v4l2_decode_param.dpb)) {
+       VLOGF(1) << "Invalid DPB size";
+       break;
+     }
++    priv_->dpb_pics.push_back(pic.get());
+ 
+     int index = VIDEO_MAX_FRAME;
+     if (!pic->nonexisting) {
+@@ -231,6 +415,13 @@
+     const H264Picture::Vector& ref_pic_listb0,
+     const H264Picture::Vector& ref_pic_listb1,
+     scoped_refptr<H264Picture> pic) {
++  priv_->slice_params = {};
++  priv_->pred_weights = {};
++  priv_->pred_weights_required = false;
++  priv_->have_slice = false;
++  priv_->slice_count = 0;
++  priv_->dpb_pics.clear();
++
+   struct v4l2_ext_control ctrl = {};
+   std::vector<struct v4l2_ext_control> ctrls;
+ 
+@@ -558,22 +749,46 @@
+ 
+   priv_->v4l2_decode_param.nal_ref_idc = slice_hdr->nal_ref_idc;
+ 
+-  // Add the 3-bytes NAL start code.
+-  // TODO: don't do it here, but have it passed from the parser?
+-  const size_t data_copy_size = size + 3;
+   if (dec_surface->secure_handle()) {
+-    // If this is multi-slice CENCv1, then we need to increase this offset.
+-    encrypted_slice_header_offset_ += data_copy_size;
+     // The secure world already post-processed the secure buffer so that all of
+     // the slice NALUs w/ 3 byte start codes are the only contents.
++    const size_t data_copy_size = size + 3;
++    // If this is multi-slice CENCv1, then we need to increase this offset.
++    encrypted_slice_header_offset_ += data_copy_size;
+     return surface_handler_->SubmitSlice(dec_surface.get(), nullptr,
+                                          data_copy_size)
+                ? Status::kOk
+                : Status::kFail;
+   }
++
++  QueryH264StatelessControls(device_, priv_.get());
++  const bool raw_nal =
++      priv_->start_code == V4L2_STATELESS_H264_START_CODE_NONE;
++  if (priv_->decode_mode == V4L2_STATELESS_H264_DECODE_MODE_SLICE_BASED &&
++      !FillH264SliceParams(priv_.get(), pps, slice_hdr, ref_pic_list0,
++                           ref_pic_list1)) {
++    return Status::kFail;
++  }
++
++  // A NAL ends on rbsp_trailing_bits (or a cabac_zero_word's 0x03). Trailing
++  // 0x00 bytes are the next start code's zero_byte, which some clients leave
++  // attached. A slice-based decoder treats them as slice data.
++  size_t payload = size;
++  if (raw_nal) {
++    while (payload > 1 && data[payload - 1] == 0x00) {
++      --payload;
++    }
++  }
++  if (payload == 0) {
++    return Status::kFail;
++  }
++  const size_t prefix = raw_nal ? 0 : 3;
++  const size_t data_copy_size = payload + prefix;
+   auto data_copy = base::HeapArray<uint8_t>::WithSize(data_copy_size);
+-  data_copy[2] = 0x01;
+-  UNSAFE_TODO(memcpy(data_copy.data() + 3, data, size));
++  if (prefix) {
++    data_copy[2] = 0x01;
++  }
++  UNSAFE_TODO(memcpy(data_copy.data() + prefix, data, payload));
+   return surface_handler_->SubmitSlice(dec_surface.get(), data_copy.data(),
+                                        data_copy_size)
+              ? Status::kOk
+@@ -613,10 +828,35 @@
+   ctrl.ptr = &priv_->v4l2_decode_param;
+   ctrls.push_back(ctrl);
+ 
+-  ctrl = {};
+-  ctrl.id = V4L2_CID_STATELESS_H264_DECODE_MODE;
+-  ctrl.value = V4L2_STATELESS_H264_DECODE_MODE_FRAME_BASED;
+-  ctrls.push_back(ctrl);
++  QueryH264StatelessControls(device_, priv_.get());
++  // Slice-only devices reject FRAME_BASED. Their default is already
++  // slice-based, so leave the control alone instead of setting it on the
++  // request. Frame-based devices keep the historical per-request value.
++  if (priv_->decode_mode != V4L2_STATELESS_H264_DECODE_MODE_SLICE_BASED) {
++    ctrl = {};
++    ctrl.id = V4L2_CID_STATELESS_H264_DECODE_MODE;
++    ctrl.value = priv_->decode_mode;
++    ctrls.push_back(ctrl);
++  }
++
++  if (priv_->decode_mode == V4L2_STATELESS_H264_DECODE_MODE_SLICE_BASED) {
++    if (!priv_->have_slice) {
++      VLOGF(1) << "Slice-based H.264 frame has no slice parameters";
++      return Status::kFail;
++    }
++    ctrl = {};
++    ctrl.id = V4L2_CID_STATELESS_H264_SLICE_PARAMS;
++    ctrl.size = sizeof(priv_->slice_params);
++    ctrl.ptr = &priv_->slice_params;
++    ctrls.push_back(ctrl);
++    if (priv_->pred_weights_required) {
++      ctrl = {};
++      ctrl.id = V4L2_CID_STATELESS_H264_PRED_WEIGHTS;
++      ctrl.size = sizeof(priv_->pred_weights);
++      ctrl.ptr = &priv_->pred_weights;
++      ctrls.push_back(ctrl);
++    }
++  }
+ 
+   struct v4l2_ext_controls ext_ctrls = {};
+   ext_ctrls.count = ctrls.size();
+@@ -644,6 +884,12 @@
+ 
+ void V4L2VideoDecoderDelegateH264::Reset() {
+   priv_->v4l2_decode_param = {};
++  priv_->slice_params = {};
++  priv_->pred_weights = {};
++  priv_->pred_weights_required = false;
++  priv_->have_slice = false;
++  priv_->slice_count = 0;
++  priv_->dpb_pics.clear();
+   encrypted_slice_header_offset_ = 0;
+   last_parsed_encrypted_slice_header_.clear();
+   encrypted_slice_header_parsing_failed_ = false;
+diff -ruN a/media/gpu/v4l2/v4l2_video_decoder_delegate_h265.cc b/media/gpu/v4l2/v4l2_video_decoder_delegate_h265.cc
+--- a/media/gpu/v4l2/v4l2_video_decoder_delegate_h265.cc	2026-11-18 12:06:44.048606348 -0300
++++ b/media/gpu/v4l2/v4l2_video_decoder_delegate_h265.cc	2026-11-18 12:09:20.461365161 -0300
+@@ -23,6 +23,217 @@
+ 
+ namespace media {
+ 
++struct V4L2VideoDecoderDelegateH265Private {
++  std::vector<struct v4l2_ctrl_hevc_slice_params> slices;
++  // Same order as the DPB submitted in the decode-params control.
++  std::vector<scoped_refptr<H265Picture>> dpb_pics;
++  int32_t decode_mode = V4L2_STATELESS_HEVC_DECODE_MODE_FRAME_BASED;
++  int32_t start_code = V4L2_STATELESS_HEVC_START_CODE_ANNEX_B;
++  bool has_slice_params = false;
++  bool controls_queried = false;
++};
++
++void QueryHevcStatelessControls(V4L2Device* device,
++                                V4L2VideoDecoderDelegateH265Private* priv) {
++  if (priv->controls_queried) {
++    return;
++  }
++  priv->controls_queried = true;
++
++  struct v4l2_queryctrl query = {};
++  query.id = V4L2_CID_STATELESS_HEVC_DECODE_MODE;
++  if (device->Ioctl(VIDIOC_QUERYCTRL, &query) == 0 &&
++      !(query.flags & V4L2_CTRL_FLAG_DISABLED)) {
++    priv->decode_mode = query.default_value;
++  }
++  query = {};
++  query.id = V4L2_CID_STATELESS_HEVC_START_CODE;
++  if (device->Ioctl(VIDIOC_QUERYCTRL, &query) == 0 &&
++      !(query.flags & V4L2_CTRL_FLAG_DISABLED)) {
++    priv->start_code = query.default_value;
++  }
++  query = {};
++  query.id = V4L2_CID_STATELESS_HEVC_SLICE_PARAMS;
++  if (device->Ioctl(VIDIOC_QUERYCTRL, &query) == 0 &&
++      !(query.flags & V4L2_CTRL_FLAG_DISABLED)) {
++    priv->has_slice_params = true;
++  }
++  VLOGF(1) << "HEVC stateless decode_mode=" << priv->decode_mode
++           << " start_code=" << priv->start_code
++           << " slice_params=" << priv->has_slice_params;
++}
++
++int FindHevcDpbIndex(
++    const std::vector<scoped_refptr<H265Picture>>& dpb,
++    const H265Picture* pic) {
++  if (!pic) {
++    return -1;
++  }
++  for (size_t i = 0; i < dpb.size(); ++i) {
++    if (dpb[i].get() == pic) {
++      return static_cast<int>(i);
++    }
++  }
++  return -1;
++}
++
++bool FillHevcRefIdx(const std::vector<scoped_refptr<H265Picture>>& dpb,
++                    const H265Picture::Vector& refs,
++                    __u8* out,
++                    int count) {
++  if (count < 0 || count > V4L2_HEVC_DPB_ENTRIES_NUM_MAX) {
++    return false;
++  }
++  for (int i = 0; i < count; ++i) {
++    if (i >= static_cast<int>(refs.size()) || !refs[i]) {
++      return false;
++    }
++    const int index = FindHevcDpbIndex(dpb, refs[i].get());
++    if (index < 0) {
++      return false;
++    }
++    out[i] = static_cast<__u8>(index);
++  }
++  return true;
++}
++
++bool AppendHevcSliceParams(V4L2VideoDecoderDelegateH265Private* priv,
++                           const H265SliceHeader* slice_hdr,
++                           const H265Picture::Vector& ref_pic_list0,
++                           const H265Picture::Vector& ref_pic_list1,
++                           const H265Picture* pic,
++                           size_t payload,
++                           size_t prefix) {
++  if (priv->decode_mode == V4L2_STATELESS_HEVC_DECODE_MODE_SLICE_BASED &&
++      !priv->slices.empty()) {
++    VLOGF(1) << "Slice-based HEVC picture has more than one slice. "
++             << "Each slice needs its own request.";
++    return false;
++  }
++  // header_size excludes emulation-prevention bytes. The hardware is pointed
++  // at a raw byte in the submitted buffer, so the offset must count them.
++  const size_t header_raw = slice_hdr->header_size +
++                            slice_hdr->header_emulation_prevention_bytes;
++  if (header_raw > payload) {
++    VLOGF(1) << "HEVC slice header extends past the NAL";
++    return false;
++  }
++
++  struct v4l2_ctrl_hevc_slice_params params = {};
++  params.bit_size = static_cast<__u32>((payload + prefix) * 8);
++  params.data_byte_offset = static_cast<__u32>(header_raw + prefix);
++  params.num_entry_point_offsets = 0;
++  params.nal_unit_type = static_cast<__u8>(slice_hdr->nal_unit_type);
++  params.nuh_temporal_id_plus1 =
++      static_cast<__u8>(slice_hdr->temporal_id + 1);
++  params.slice_type = static_cast<__u8>(slice_hdr->slice_type);
++  params.colour_plane_id = static_cast<__u8>(slice_hdr->colour_plane_id);
++  params.slice_pic_order_cnt = pic->pic_order_cnt_val_;
++  params.num_ref_idx_l0_active_minus1 =
++      static_cast<__u8>(slice_hdr->num_ref_idx_l0_active_minus1);
++  params.num_ref_idx_l1_active_minus1 =
++      static_cast<__u8>(slice_hdr->num_ref_idx_l1_active_minus1);
++  params.collocated_ref_idx =
++      slice_hdr->slice_temporal_mvp_enabled_flag
++          ? static_cast<__u8>(slice_hdr->collocated_ref_idx)
++          : 0;
++  params.five_minus_max_num_merge_cand =
++      static_cast<__u8>(slice_hdr->five_minus_max_num_merge_cand);
++  params.slice_qp_delta = static_cast<__s8>(slice_hdr->slice_qp_delta);
++  params.slice_cb_qp_offset = static_cast<__s8>(slice_hdr->slice_cb_qp_offset);
++  params.slice_cr_qp_offset = static_cast<__s8>(slice_hdr->slice_cr_qp_offset);
++  params.slice_beta_offset_div2 =
++      static_cast<__s8>(slice_hdr->slice_beta_offset_div2);
++  params.slice_tc_offset_div2 =
++      static_cast<__s8>(slice_hdr->slice_tc_offset_div2);
++  params.slice_segment_addr =
++      static_cast<__u32>(slice_hdr->slice_segment_address);
++  params.short_term_ref_pic_set_size =
++      static_cast<__u16>(slice_hdr->st_rps_bits);
++  params.long_term_ref_pic_set_size =
++      static_cast<__u16>(slice_hdr->lt_rps_bits);
++
++  if (slice_hdr->slice_sao_luma_flag) {
++    params.flags |= V4L2_HEVC_SLICE_PARAMS_FLAG_SLICE_SAO_LUMA;
++  }
++  if (slice_hdr->slice_sao_chroma_flag) {
++    params.flags |= V4L2_HEVC_SLICE_PARAMS_FLAG_SLICE_SAO_CHROMA;
++  }
++  if (slice_hdr->slice_temporal_mvp_enabled_flag) {
++    params.flags |= V4L2_HEVC_SLICE_PARAMS_FLAG_SLICE_TEMPORAL_MVP_ENABLED;
++  }
++  if (slice_hdr->mvd_l1_zero_flag) {
++    params.flags |= V4L2_HEVC_SLICE_PARAMS_FLAG_MVD_L1_ZERO;
++  }
++  if (slice_hdr->cabac_init_flag) {
++    params.flags |= V4L2_HEVC_SLICE_PARAMS_FLAG_CABAC_INIT;
++  }
++  if (slice_hdr->collocated_from_l0_flag) {
++    params.flags |= V4L2_HEVC_SLICE_PARAMS_FLAG_COLLOCATED_FROM_L0;
++  }
++  if (slice_hdr->slice_deblocking_filter_disabled_flag) {
++    params.flags |=
++        V4L2_HEVC_SLICE_PARAMS_FLAG_SLICE_DEBLOCKING_FILTER_DISABLED;
++  }
++  if (slice_hdr->slice_loop_filter_across_slices_enabled_flag) {
++    params.flags |=
++        V4L2_HEVC_SLICE_PARAMS_FLAG_SLICE_LOOP_FILTER_ACROSS_SLICES_ENABLED;
++  }
++  if (slice_hdr->dependent_slice_segment_flag) {
++    params.flags |= V4L2_HEVC_SLICE_PARAMS_FLAG_DEPENDENT_SLICE_SEGMENT;
++  }
++
++  if (slice_hdr->slice_type == H265SliceHeader::kSliceTypeP ||
++      slice_hdr->slice_type == H265SliceHeader::kSliceTypeB) {
++    if (!FillHevcRefIdx(priv->dpb_pics, ref_pic_list0, params.ref_idx_l0,
++                        slice_hdr->num_ref_idx_l0_active_minus1 + 1)) {
++      VLOGF(1) << "HEVC L0 reference is not in the DPB";
++      return false;
++    }
++  }
++  if (slice_hdr->slice_type == H265SliceHeader::kSliceTypeB) {
++    if (!FillHevcRefIdx(priv->dpb_pics, ref_pic_list1, params.ref_idx_l1,
++                        slice_hdr->num_ref_idx_l1_active_minus1 + 1)) {
++      VLOGF(1) << "HEVC L1 reference is not in the DPB";
++      return false;
++    }
++  }
++
++  const auto& table = slice_hdr->pred_weight_table;
++  auto* out = &params.pred_weight_table;
++  out->luma_log2_weight_denom =
++      static_cast<__u8>(table.luma_log2_weight_denom);
++  out->delta_chroma_log2_weight_denom =
++      static_cast<__s8>(table.delta_chroma_log2_weight_denom);
++  const int n0 = std::min(slice_hdr->num_ref_idx_l0_active_minus1 + 1, 15);
++  const int n1 = std::min(slice_hdr->num_ref_idx_l1_active_minus1 + 1, 15);
++  for (int i = 0; i < n0; ++i) {
++    out->delta_luma_weight_l0[i] =
++        static_cast<__s8>(table.delta_luma_weight_l0[i]);
++    out->luma_offset_l0[i] = static_cast<__s8>(table.luma_offset_l0[i]);
++    for (int j = 0; j < 2; ++j) {
++      out->delta_chroma_weight_l0[i][j] =
++          static_cast<__s8>(table.delta_chroma_weight_l0[i][j]);
++      out->chroma_offset_l0[i][j] =
++          static_cast<__s8>(table.delta_chroma_offset_l0[i][j]);
++    }
++  }
++  for (int i = 0; i < n1; ++i) {
++    out->delta_luma_weight_l1[i] =
++        static_cast<__s8>(table.delta_luma_weight_l1[i]);
++    out->luma_offset_l1[i] = static_cast<__s8>(table.luma_offset_l1[i]);
++    for (int j = 0; j < 2; ++j) {
++      out->delta_chroma_weight_l1[i][j] =
++          static_cast<__s8>(table.delta_chroma_weight_l1[i][j]);
++      out->chroma_offset_l1[i][j] =
++          static_cast<__s8>(table.delta_chroma_offset_l1[i][j]);
++    }
++  }
++
++  priv->slices.push_back(params);
++  return true;
++}
++
+ class V4L2H265Picture : public H265Picture {
+  public:
+   explicit V4L2H265Picture(scoped_refptr<V4L2DecodeSurface> dec_surface)
+@@ -43,7 +254,9 @@
+ V4L2VideoDecoderDelegateH265::V4L2VideoDecoderDelegateH265(
+     V4L2DecodeSurfaceHandler* surface_handler,
+     V4L2Device* device)
+-    : surface_handler_(surface_handler), device_(device) {
++    : surface_handler_(surface_handler),
++      device_(device),
++      priv_(std::make_unique<V4L2VideoDecoderDelegateH265Private>()) {
+   DCHECK(surface_handler_);
+ }
+ 
+@@ -81,6 +294,7 @@
+ 
+   UNSAFE_TODO(
+       memset(v4l2_decode_param->dpb, 0, sizeof(v4l2_decode_param->dpb)));
++  priv_->dpb_pics.clear();
+   unsigned int i = 0;
+   for (const auto& pic : ref_pic_list) {
+     if (i >= V4L2_HEVC_DPB_ENTRIES_NUM_MAX) {
+@@ -91,6 +305,7 @@
+     if (!pic) {
+       continue;
+     }
++    priv_->dpb_pics.push_back(pic);
+ 
+     unsigned int index = 0xff;
+     if (!pic->IsUnused()) {
+@@ -197,6 +412,7 @@
+     const H265Picture::Vector& ref_pic_set_st_curr_after,
+     const H265Picture::Vector& ref_pic_set_st_curr_before,
+     scoped_refptr<H265Picture> pic) {
++  priv_->slices.clear();
+   drop_frame_ = false;
+   if (pic->no_rasl_output_flag_ &&
+       (slice_hdr->nal_unit_type == H265NALU::RASL_N ||
+@@ -528,20 +744,47 @@
+   scoped_refptr<V4L2DecodeSurface> dec_surface =
+       H265PictureToV4L2DecodeSurface(pic.get());
+ 
+-  // Add the 3-bytes NAL start code.
+-  // TODO: don't do it here, but have it passed from the parser?
+-  const size_t data_copy_size = size + 3;
++  QueryHevcStatelessControls(device_, priv_.get());
++  const bool raw_nal =
++      priv_->start_code == V4L2_STATELESS_HEVC_START_CODE_NONE;
++
+   if (dec_surface->secure_handle()) {
+     // The secure world already post-processed the secure buffer so that all of
+     // the slice NALUs w/ 3 byte start codes are the only contents.
++    const size_t data_copy_size = size + 3;
++    if (priv_->has_slice_params &&
++        !AppendHevcSliceParams(priv_.get(), slice_hdr, ref_pic_list0,
++                               ref_pic_list1, pic.get(), size, 3)) {
++      return Status::kFail;
++    }
+     return surface_handler_->SubmitSlice(dec_surface.get(), nullptr,
+                                          data_copy_size)
+                ? Status::kOk
+                : Status::kFail;
+   }
++
++  size_t payload = size;
++  if (raw_nal) {
++    while (payload > 1 && data[payload - 1] == 0x00) {
++      --payload;
++    }
++  }
++  if (payload == 0) {
++    return Status::kFail;
++  }
++  const size_t prefix = raw_nal ? 0 : 3;
++  if (priv_->has_slice_params &&
++      !AppendHevcSliceParams(priv_.get(), slice_hdr, ref_pic_list0,
++                             ref_pic_list1, pic.get(), payload, prefix)) {
++    return Status::kFail;
++  }
++
++  const size_t data_copy_size = payload + prefix;
+   auto data_copy = base::HeapArray<uint8_t>::WithSize(data_copy_size);
+-  data_copy[2] = 0x01;
+-  UNSAFE_TODO(memcpy(data_copy.data() + 3, data, size));
++  if (prefix) {
++    data_copy[2] = 0x01;
++  }
++  UNSAFE_TODO(memcpy(data_copy.data() + prefix, data, payload));
+   return surface_handler_->SubmitSlice(dec_surface.get(), data_copy.data(),
+                                        data_copy_size)
+              ? Status::kOk
+@@ -557,6 +800,30 @@
+   scoped_refptr<V4L2DecodeSurface> dec_surface =
+       H265PictureToV4L2DecodeSurface(pic.get());
+ 
++  QueryHevcStatelessControls(device_, priv_.get());
++  if (priv_->has_slice_params) {
++    if (priv_->slices.empty()) {
++      VLOGF(1) << "HEVC frame has no slice parameters";
++      return Status::kFail;
++    }
++    struct v4l2_ext_control ctrl = {};
++    std::vector<struct v4l2_ext_control> ctrls;
++    ctrl.id = V4L2_CID_STATELESS_HEVC_SLICE_PARAMS;
++    ctrl.size = sizeof(struct v4l2_ctrl_hevc_slice_params) *
++                priv_->slices.size();
++    ctrl.ptr = priv_->slices.data();
++    ctrls.push_back(ctrl);
++
++    struct v4l2_ext_controls ext_ctrls = {};
++    ext_ctrls.count = ctrls.size();
++    ext_ctrls.controls = ctrls.data();
++    dec_surface->PrepareSetCtrls(&ext_ctrls);
++    if (device_->Ioctl(VIDIOC_S_EXT_CTRLS, &ext_ctrls) != 0) {
++      VPLOGF(1) << "ioctl() failed: HEVC slice params";
++      return Status::kFail;
++    }
++  }
++
+   DVLOGF(4) << "Submitting decode for surface: " << dec_surface->ToString();
+   surface_handler_->DecodeSurface(dec_surface);
+   return Status::kOk;
+@@ -572,6 +839,8 @@
+ 
+ void V4L2VideoDecoderDelegateH265::Reset() {
+   drop_frame_ = false;
++  priv_->slices.clear();
++  priv_->dpb_pics.clear();
+ }
+ 
+ bool V4L2VideoDecoderDelegateH265::IsChromaSamplingSupported(
+diff -ruN a/media/gpu/v4l2/v4l2_video_decoder_delegate_h265.h b/media/gpu/v4l2/v4l2_video_decoder_delegate_h265.h
+--- a/media/gpu/v4l2/v4l2_video_decoder_delegate_h265.h	2026-11-18 12:06:44.049682571 -0300
++++ b/media/gpu/v4l2/v4l2_video_decoder_delegate_h265.h	2026-11-18 12:07:58.459418717 -0300
+@@ -17,6 +17,8 @@
+ 
+ namespace media {
+ 
++struct V4L2VideoDecoderDelegateH265Private;
++
+ class V4L2Device;
+ class V4L2DecodeSurface;
+ class V4L2DecodeSurfaceHandler;
+@@ -78,6 +80,9 @@
+   raw_ptr<V4L2DecodeSurfaceHandler> const surface_handler_;
+   raw_ptr<V4L2Device> const device_;
+ 
++  // Kernel slice-parameter array and the queried start-code / decode mode.
++  const std::unique_ptr<V4L2VideoDecoderDelegateH265Private> priv_;
++
+   // Indicate that a frame is dropped because it's not decodable
+   // (RASL frame). This is updated every SubmitFrameMetadata().
+   bool drop_frame_ = false;
