@@ -1,0 +1,223 @@
+HEVC V4L2 encode on Linux, and a hybrid VA-API plus V4L2 build.
+
+is_linux is in platform_has_optional_hevc_encode_support, so the
+renderer asks the GPU for an HEVC encoder profile. The stateful
+capture fourcc V4L2_PIX_FMT_HEVC is mapped beside the slice fourcc,
+and InitControlsHEVC sets B-frames to 0 and Main or Main 10.
+
+fourcc.h and fourcc.cc keep the VA fourcc methods when use_vaapi and
+use_v4l2_codec are both on. The image-processor test helpers return
+null in that configuration. The production USE_VAAPI / USE_V4L2 order
+is unchanged, so decode stays on VA-API.
+
+diff -ruN a/media/gpu/chromeos/fourcc.cc b/media/gpu/chromeos/fourcc.cc
+--- a/media/gpu/chromeos/fourcc.cc	2026-11-18 06:01:07.894052643 -0600
++++ b/media/gpu/chromeos/fourcc.cc	2026-11-18 03:58:24.109933111 -0600
+@@ -10,9 +10,10 @@
+ 
+ #if BUILDFLAG(USE_V4L2_CODEC)
+ #include <linux/videodev2.h>
+-#elif BUILDFLAG(USE_VAAPI)
++#endif
++#if BUILDFLAG(USE_VAAPI)
+ #include <va/va.h>
+-#endif  // BUILDFLAG(USE_VAAPI)
++#endif
+ 
+ namespace media {
+ 
+@@ -219,7 +220,8 @@
+   // Fourcc as V4L2.
+   return static_cast<uint32_t>(value_);
+ }
+-#elif BUILDFLAG(USE_VAAPI)
++#endif
++#if BUILDFLAG(USE_VAAPI)
+ // static
+ std::optional<Fourcc> Fourcc::FromVAFourCC(uint32_t va_fourcc) {
+   switch (va_fourcc) {
+diff -ruN a/media/gpu/chromeos/fourcc.h b/media/gpu/chromeos/fourcc.h
+--- a/media/gpu/chromeos/fourcc.h	2026-11-18 06:01:07.893748852 -0600
++++ b/media/gpu/chromeos/fourcc.h	2026-11-18 03:58:24.109825778 -0600
+@@ -135,11 +135,12 @@
+   // Converts a V4L2PixFmt to Fourcc.
+   // Returns nullopt for invalid input.
+   static std::optional<Fourcc> FromV4L2PixFmt(uint32_t v4l2_pix_fmt);
+-#elif BUILDFLAG(USE_VAAPI)
++#endif
++#if BUILDFLAG(USE_VAAPI)
+   // Converts a VAFourCC to Fourcc.
+   // Returns nullopt for invalid input.
+   static std::optional<Fourcc> FromVAFourCC(uint32_t va_fourcc);
+-#endif  // BUILDFLAG(USE_VAAPI)
++#endif
+ 
+   // Value getters:
+   // Returns the VideoPixelFormat counterpart of the value.
+@@ -149,11 +150,12 @@
+   // Returns the V4L2PixFmt counterpart of the value.
+   // Returns 0 if no mapping is found.
+   uint32_t ToV4L2PixFmt() const;
+-#elif BUILDFLAG(USE_VAAPI)
++#endif
++#if BUILDFLAG(USE_VAAPI)
+   // Returns the VAFourCC counterpart of the value.
+   // Returns nullopt if no mapping is found.
+   std::optional<uint32_t> ToVAFourCC() const;
+-#endif  // BUILDFLAG(USE_VAAPI)
++#endif
+ 
+   // Returns the single-planar Fourcc of the value. If value is a single-planar,
+   // returns the same Fourcc. Returns nullopt if the value is neither
+diff -ruN a/media/gpu/chromeos/image_processor_factory.cc b/media/gpu/chromeos/image_processor_factory.cc
+--- a/media/gpu/chromeos/image_processor_factory.cc	2026-11-18 06:01:07.894392560 -0600
++++ b/media/gpu/chromeos/image_processor_factory.cc	2026-11-18 03:58:24.110049485 -0600
+@@ -370,10 +370,15 @@
+     scoped_refptr<base::SequencedTaskRunner> client_task_runner,
+     PickFormatCB out_format_picker,
+     ImageProcessor::ErrorCB error_cb) {
++#if !BUILDFLAG(USE_VAAPI)
+   return CreateLibYUVImageProcessorWithInputCandidates(
+       input_candidates, input_visible_rect, output_size,
+       VideoFrame::STORAGE_MAPPABLE_SHARED_IMAGE, client_task_runner,
+       out_format_picker, error_cb);
++#else
++  // LibYUV factory is compiled only in the V4L2-only branch.
++  return nullptr;
++#endif
+ }
+ 
+ std::unique_ptr<ImageProcessor>
+@@ -385,7 +390,7 @@
+     scoped_refptr<base::SequencedTaskRunner> client_task_runner,
+     PickFormatCB out_format_picker,
+     ImageProcessor::ErrorCB error_cb) {
+-#if defined(ARCH_CPU_ARM_FAMILY)
++#if defined(ARCH_CPU_ARM_FAMILY) && !BUILDFLAG(USE_VAAPI)
+   return CreateGLImageProcessorWithInputCandidates(
+       input_candidates, input_visible_rect, output_size,
+       VideoFrame::STORAGE_MAPPABLE_SHARED_IMAGE, client_task_runner,
+diff -ruN a/media/gpu/v4l2/v4l2_utils.cc b/media/gpu/v4l2/v4l2_utils.cc
+--- a/media/gpu/v4l2/v4l2_utils.cc	2026-11-18 06:01:07.894759559 -0600
++++ b/media/gpu/v4l2/v4l2_utils.cc	2026-11-18 03:58:24.110185526 -0600
+@@ -333,6 +333,8 @@
+         {V4L2_PIX_FMT_H264_SLICE, V4L2_CID_MPEG_VIDEO_H264_PROFILE},
+ #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+         {V4L2_PIX_FMT_HEVC_SLICE, V4L2_CID_MPEG_VIDEO_HEVC_PROFILE},
++        // Stateful encoder capture fourcc. The slice fourcc is the decoder.
++        {V4L2_PIX_FMT_HEVC, V4L2_CID_MPEG_VIDEO_HEVC_PROFILE},
+ #endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+         {V4L2_PIX_FMT_VP8, V4L2_CID_MPEG_VIDEO_VP8_PROFILE},
+         {V4L2_PIX_FMT_VP8_FRAME, V4L2_CID_MPEG_VIDEO_VP8_PROFILE},
+diff -ruN a/media/gpu/v4l2/v4l2_video_encode_accelerator.cc b/media/gpu/v4l2/v4l2_video_encode_accelerator.cc
+--- a/media/gpu/v4l2/v4l2_video_encode_accelerator.cc	2026-11-18 06:01:07.895643183 -0600
++++ b/media/gpu/v4l2/v4l2_video_encode_accelerator.cc	2026-11-18 03:58:24.110734774 -0600
+@@ -3,6 +3,8 @@
+ // found in the LICENSE file.
+ 
+ #include "media/gpu/v4l2/v4l2_video_encode_accelerator.h"
++
++#include "media/media_buildflags.h"
+ #include "build/build_config.h"
+ 
+ #include <fcntl.h>
+@@ -2083,7 +2085,11 @@
+ 
+   // Don't expect other output formats.
+   CHECK(output_format_fourcc_ == V4L2_PIX_FMT_H264 ||
+-        output_format_fourcc_ == V4L2_PIX_FMT_VP8);
++        output_format_fourcc_ == V4L2_PIX_FMT_VP8
++#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
++        || output_format_fourcc_ == V4L2_PIX_FMT_HEVC
++#endif
++  );
+ 
+   // Enable frame-level bitrate control. This is the only mandatory control.
+   if (!device_->SetExtCtrls(
+@@ -2103,6 +2109,13 @@
+     case V4L2_PIX_FMT_VP8:
+       InitControlsVP8(config);
+       break;
++#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
++    case V4L2_PIX_FMT_HEVC:
++      if (!InitControlsHEVC(config)) {
++        return false;
++      }
++      break;
++#endif
+     default:
+       NOTREACHED() << "Unsupported codec "
+                    << FourccToString(output_format_fourcc_);
+@@ -2119,6 +2132,38 @@
+   return true;
+ }
+ 
++#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
++bool V4L2VideoEncodeAccelerator::InitControlsHEVC(const Config& config) {
++  // No B-frames, matching the H.264 path and the apple-ave low-delay setup.
++  device_->SetExtCtrls(V4L2_CTRL_CLASS_MPEG,
++                       {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_B_FRAMES, 0)});
++
++  int32_t profile_value = -1;
++  switch (config.output_profile) {
++    case HEVCPROFILE_MAIN:
++      profile_value = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN;
++      break;
++    case HEVCPROFILE_MAIN10:
++      profile_value = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10;
++      break;
++    default:
++      SetErrorState({EncoderStatus::Codes::kEncoderUnsupportedProfile,
++                     base::StrCat({"Unexpected hevc profile: ",
++                                   GetProfileName(config.output_profile)})});
++      return false;
++  }
++  if (!device_->SetExtCtrls(
++          V4L2_CTRL_CLASS_MPEG,
++          {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_HEVC_PROFILE, profile_value)})) {
++    SetErrorState({EncoderStatus::Codes::kEncoderUnsupportedProfile,
++                   base::StrCat({"Failed setting hevc profile: ",
++                                 GetProfileName(config.output_profile)})});
++    return false;
++  }
++  return true;
++}
++#endif
++
+ bool V4L2VideoEncodeAccelerator::InitControlsH264(const Config& config) {
+ #ifndef V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR
+ #define V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR (V4L2_CID_MPEG_BASE + 644)
+diff -ruN a/media/gpu/v4l2/v4l2_video_encode_accelerator.h b/media/gpu/v4l2/v4l2_video_encode_accelerator.h
+--- a/media/gpu/v4l2/v4l2_video_encode_accelerator.h	2026-11-18 06:01:07.895156933 -0600
++++ b/media/gpu/v4l2/v4l2_video_encode_accelerator.h	2026-11-18 03:58:24.110418608 -0600
+@@ -26,6 +26,7 @@
+ #include "media/base/encoder_status.h"
+ #include "media/gpu/chromeos/image_processor.h"
+ #include "media/gpu/media_gpu_export.h"
++#include "media/media_buildflags.h"
+ #include "media/gpu/v4l2/v4l2_device.h"
+ #include "media/video/video_encode_accelerator.h"
+ #include "ui/gfx/geometry/size.h"
+@@ -251,6 +252,10 @@
+   // Initialize device controls with |config| or default values.
+   bool InitControlsH264(const Config& config);
+ 
++#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
++  bool InitControlsHEVC(const Config& config);
++#endif
++
+   // Initialize device controls with |config| or default values.
+   void InitControlsVP8(const Config& config);
+ 
+diff -ruN a/media/media_options.gni b/media/media_options.gni
+--- a/media/media_options.gni	2026-11-18 06:01:07.894597351 -0600
++++ b/media/media_options.gni	2026-11-18 03:58:24.110110193 -0600
+@@ -167,7 +167,7 @@
+       enable_platform_hevc &&
+       (is_win || is_chromeos || is_linux || is_apple || is_android)
+   platform_has_optional_hevc_encode_support =
+-      enable_platform_hevc && (is_win || is_apple || is_android)
++      enable_platform_hevc && (is_win || is_apple || is_android || is_linux)
+ }
+ 
+ assert(!enable_hls_demuxer || enable_mse_mpeg2ts_stream_parser,
