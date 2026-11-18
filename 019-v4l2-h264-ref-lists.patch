@@ -1,0 +1,81 @@
+Ask the H.264 parser for reference lists on a slice-based decoder.
+
+The V4L2 stateless delegate never said it needed reference lists, so the
+parser left them empty. VA-API does ask. On the first P-slice the header
+names one reference, the empty list cannot supply it, and Chromium falls
+back to software before the driver sees the slice. An I-slice has no list,
+which is why that slice's controls were already accepted.
+
+Slice-based devices now ask for the lists. Spare slots at the start of a
+GOP, where the header asks for more entries than pictures exist, repeat the
+last real reference. The driver checks every active index, and the bitstream
+does not address the spare ones. A frame-based device still gets the old
+answer, so ChromeOS hardware is unchanged. This is the stateless uAPI, not
+an Apple-only change.
+
+--- a/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.h	2026-11-18 13:37:58.426855543 -0300
++++ b/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.h	2026-11-18 13:39:17.368585418 -0300
+@@ -93,6 +93,9 @@
+   Status SubmitDecode(scoped_refptr<H264Picture> pic) override;
+   bool OutputPicture(scoped_refptr<H264Picture> pic) override;
+   void Reset() override;
++  // Slice-based decoders need the reference lists. Frame-based ones parse
++  // the slice header in hardware and keep the default (false).
++  bool RequiresRefLists() override;
+ 
+  private:
+   std::vector<scoped_refptr<V4L2DecodeSurface>> H264DPBToV4L2DPB(
+--- a/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc	2026-11-18 13:37:58.329852193 -0300
++++ b/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc	2026-11-18 13:39:24.932847341 -0300
+@@ -114,12 +114,22 @@
+   if (count < 0 || count > V4L2_H264_REF_LIST_LEN) {
+     return false;
+   }
++  // The slice header asks for num_ref_idx_lX_active entries. Early in a GOP
++  // fewer reference pictures exist, and the parser leaves the spare slots
++  // null. A slice-based driver still checks every active index, so those
++  // slots repeat the last real reference. The bitstream does not address them.
++  int fallback = -1;
+   for (int i = 0; i < count; ++i) {
+-    if (i >= static_cast<int>(refs.size()) || !refs[i]) {
+-      return false;
+-    }
+-    const int index = FindH264DpbIndex(dpb, refs[i].get());
+-    if (index < 0) {
++    int index = -1;
++    if (i < static_cast<int>(refs.size()) && refs[i]) {
++      index = FindH264DpbIndex(dpb, refs[i].get());
++      if (index < 0) {
++        return false;
++      }
++      fallback = index;
++    } else if (fallback >= 0) {
++      index = fallback;
++    } else {
+       return false;
+     }
+     out[i].index = static_cast<__u8>(index);
+@@ -182,7 +192,10 @@
+       slice_type == V4L2_H264_SLICE_TYPE_B) {
+     if (!FillH264RefList(priv->dpb_pics, ref_pic_list0, slice->ref_pic_list0,
+                          slice_hdr->num_ref_idx_l0_active_minus1 + 1)) {
+-      VLOGF(1) << "H.264 L0 reference is not in the DPB";
++      VLOGF(1) << "H.264 L0 reference is not in the DPB"
++               << " list=" << ref_pic_list0.size()
++               << " active=" << (slice_hdr->num_ref_idx_l0_active_minus1 + 1)
++               << " dpb=" << priv->dpb_pics.size();
+       return false;
+     }
+   }
+@@ -304,6 +317,11 @@
+ 
+ V4L2VideoDecoderDelegateH264::~V4L2VideoDecoderDelegateH264() {}
+ 
++bool V4L2VideoDecoderDelegateH264::RequiresRefLists() {
++  QueryH264StatelessControls(device_, priv_.get());
++  return priv_->decode_mode == V4L2_STATELESS_H264_DECODE_MODE_SLICE_BASED;
++}
++
+ scoped_refptr<H264Picture> V4L2VideoDecoderDelegateH264::CreateH264Picture() {
+   scoped_refptr<V4L2DecodeSurface> dec_surface =
+       surface_handler_->CreateSurface();
