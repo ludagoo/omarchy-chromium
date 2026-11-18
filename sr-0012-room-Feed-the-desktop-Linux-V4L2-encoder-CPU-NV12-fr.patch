@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From e1be6c2df63e52c0365c5c765ebb7bfcde1753a9 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 19:00:02 -0300
 Subject: [PATCH 12/12] room: Feed the desktop Linux V4L2 encoder CPU NV12
@@ -138,3 +138,6 @@ index b829845..adf51ba 100644
    // We need to keep sending frames with the same storage type.
    // Other platforms will happily mix GpuMemoryBuffer storage with shared-mem
    // storage, so we don't care about mismatches on other platforms.
+-- 
+2.56.0
+

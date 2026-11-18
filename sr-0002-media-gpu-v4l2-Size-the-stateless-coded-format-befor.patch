@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From cf33110409fe21b84cb2a93632d55bf549268246 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:15:21 -0300
 Subject: [PATCH 02/12] media/gpu/v4l2: Size the stateless coded format before
@@ -196,3 +196,6 @@ index 97211bb..35dafad 100644
  
      ctrl.id = V4L2_CID_STATELESS_H264_SPS;
      ctrl.size = sizeof(v4l2_h264_sps);
+-- 
+2.56.0
+

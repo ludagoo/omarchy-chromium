@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 7d05f8e48ffb115c5bf50d95f9a7d8416e7732db Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:21:58 -0300
 Subject: [PATCH 07/12] content/gpu: Allow V4L2 codec nodes in the desktop
@@ -9,21 +9,27 @@ on Linux V4L2Device looks for it at /dev/videoN and /dev/mediaN. The
 GPU process broker, however, allows V4L2 nodes only on ChromeOS and
 Chromecast, and only under the ChromeOS names (/dev/video-decN,
 /dev/media-decN, /dev/video-encN). With the GPU sandbox on, a desktop
-build therefore finds no V4L2 device: "No V4L2 API found for profile"
-and an empty encoder profile list. Distributions work around this
-with --disable-gpu-sandbox, or with udev rules that create the
-ChromeOS names plus a patch that makes Linux look only for those.
+build therefore finds no V4L2 device: "No V4L2 API found for profile:
+h264 high" and an empty encoder profile list.
+
+Distributions work around this with --disable-gpu-sandbox, or with a
+udev rule that creates the ChromeOS names plus a patch that makes Linux
+look only for those. The second one fails quietly whenever the links
+are missing (rule not installed, or a hand-made link gone after a
+reboot). On Apple M2 Max with such a build, a WebRTC call then had no
+hardware decoder for H.264 and showed no remote video.
 
 Find the codec nodes before the sandbox starts and allow exactly
 those. FindV4L2CodecDevicePaths() lists /dev/videoN nodes that are
 memory-to-memory and take (decoder) or produce (encoder) a compressed
 video format, and for decoders the /dev/mediaN controller with the
-same driver and bus_info, which the request API needs. Cameras,
-capture cards and v4l2loopback nodes are not memory-to-memory and are
-never allowed; JPEG codecs and image processors are not video codecs.
-The ChromeOS names are allowed as well, so existing udev rules keep
-working. Decoder nodes are only allowed when accelerated video decode
-is enabled, encoder nodes only when accelerated video encode is.
+same bus_info (or driver, when bus_info is empty), which is how
+V4L2Device pairs them for the request API. Cameras, capture cards and
+v4l2loopback nodes are not memory-to-memory and are never allowed;
+JPEG codecs and image processors are not video codecs. The ChromeOS
+names are allowed as well, so existing udev rules keep working.
+Decoder nodes are only allowed when accelerated video decode is
+enabled, encoder nodes only when accelerated video encode is.
 
 Nothing changes for builds without use_v4l2_codec (official Chrome),
 for ChromeOS, or for Chromecast. With use_vaapi and use_v4l2_codec
@@ -31,11 +37,10 @@ both set, the scan finds nothing on a machine without V4L2 codecs.
 
 Bug: None
 Test: media_unittests --gtest_filter=V4L2CodecNodesTest.*
-Test: Linux arm64 (Apple M2 Max, kernel 7.2): with the GPU sandbox on
-      and no udev rule, /dev/video0 (avd) and /dev/media0 are allowed,
-      /dev/video10 and /dev/video11 (apple-ave) are allowed for encode,
-      the v4l2loopback cameras /dev/video20-23 are not; H.264 decodes
-      on V4L2VideoDecoder
+Test: Linux arm64 (Apple M2 Max, kernel 7.2), GPU sandbox on, no
+      /dev/video-dec* or /dev/video-enc* links: H.264 plays on
+      V4L2VideoDecoder; the v4l2loopback cameras are not opened by
+      the GPU process
 Assisted-by: Claude:claude-opus-5-5
 ---
  content/common/gpu_pre_sandbox_hook_linux.cc |  23 ++
@@ -499,3 +504,6 @@ index 0000000..57821d0
 +
 +}  // namespace
 +}  // namespace media
+-- 
+2.56.0
+

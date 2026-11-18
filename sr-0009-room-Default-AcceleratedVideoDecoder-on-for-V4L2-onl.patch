@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 08606430f80d8d2cdf5e200945ab2429217b2591 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:56:35 -0300
 Subject: [PATCH 09/12] room: Default AcceleratedVideoDecoder on for V4L2-only
@@ -39,3 +39,6 @@ index cba69f6..0d4a79a 100644
               base::FEATURE_ENABLED_BY_DEFAULT);
  #else
               base::FEATURE_DISABLED_BY_DEFAULT);
+-- 
+2.56.0
+

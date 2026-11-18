@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 9093e5149a947c099b40661a39771bf7602ce267 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:14:39 -0300
 Subject: [PATCH 01/12] media/gpu/v4l2: Give single-buffer P010 a second color
@@ -78,3 +78,6 @@ index d3e958b..cc5a471 100644
  // Test V4L2FormatToVideoFrameLayout with NV12M pixelformat, which has two
  // buffers and two color planes.
  TEST(V4L2UtilsTest, V4L2FormatToVideoFrameLayoutNV12M) {
+-- 
+2.56.0
+

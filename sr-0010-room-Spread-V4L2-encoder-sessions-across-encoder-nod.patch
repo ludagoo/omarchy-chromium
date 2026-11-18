@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From e8134be43fb49786cd57c0441b9c4778c705a541 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:56:35 -0300
 Subject: [PATCH 10/12] room: Spread V4L2 encoder sessions across encoder nodes
@@ -162,3 +162,6 @@ index 08039c4..2448c0b 100644
    // eventfd fd to signal device poll thread when its poll() should be
    // interrupted.
    base::ScopedFD device_poll_interrupt_fd_;
+-- 
+2.56.0
+
