@@ -1,0 +1,386 @@
+Send the VP9 compressed-header probability updates.
+
+The stateless VP9 control for the compressed header carries the probability
+deltas from that header, plus the transform mode. Zero means "leave this
+probability alone". Apple's decoder does not parse the compressed header
+itself. Without the control it keeps the default probabilities and a 4x4
+transform mode. Profile 0 still finishes a frame. Profile 2's 10-bit
+keyframe updates those probabilities (its transform mode is 16x16, not
+4x4), the firmware loses the bitstream, and the mailbox comes back as
+status 8.
+
+Chromium's parser stops at the uncompressed header, so the delegate reads
+the compressed header from the frame bytes the same way the VA-API shim
+does. The values are the inv_map deltas, not the absolute probabilities:
+the kernel applies the remap itself. reference_mode comes from that same
+parse. Drivers that do not expose the control are left alone.
+
+Any stateless VP9 decoder that cannot parse the compressed header needs
+this. It is not an Apple-only change.
+
+--- a/media/gpu/v4l2/v4l2_video_decoder_delegate_vp9.h	2026-11-18 14:13:37.754746921 -0300
++++ b/media/gpu/v4l2/v4l2_video_decoder_delegate_vp9.h	2026-11-18 14:13:59.341847703 -0300
+@@ -39,6 +39,11 @@
+  private:
+   raw_ptr<V4L2DecodeSurfaceHandler> const surface_handler_;
+   raw_ptr<V4L2Device> const device_;
++
++  // Drivers that cannot parse the VP9 compressed header themselves expose
++  // V4L2_CID_STATELESS_VP9_COMPRESSED_HDR. Others do not, and must not be
++  // sent the control.
++  const bool supports_compressed_header_;
+ };
+ 
+ }  // namespace media
+--- a/media/gpu/v4l2/v4l2_video_decoder_delegate_vp9.cc	2026-11-18 14:13:37.753585132 -0300
++++ b/media/gpu/v4l2/v4l2_video_decoder_delegate_vp9.cc	2026-11-18 14:15:06.090296262 -0300
+@@ -106,13 +106,311 @@
+ 
+   SafeArrayMemcpy(v4l2_seg->feature_data, vp9_seg_params.feature_data);
+ }
++
++// Boolean decoder for the VP9 compressed header. Same bit packing as the
++// VA-API shim: the control wants inv_map_table deltas, and a zero byte means
++// "do not update". Copying the absolute probabilities would apply the remap
++// twice.
++class Vp9Bool {
++ public:
++  bool Init(const uint8_t* data, size_t size) {
++    buffer_ = data;
++    end_ = data + size;
++    value_ = 0;
++    count_ = -8;
++    range_ = 255;
++    error_ = false;
++    Fill();
++    return !error_;
++  }
++
++  int Bit(unsigned int prob) {
++    const unsigned int split = 1 + (((range_ - 1) * prob) >> 8);
++    const uint64_t bigsplit = static_cast<uint64_t>(split) << (64 - 8);
++    int bit;
++    if (count_ < 0) {
++      Fill();
++    }
++    if (value_ >= bigsplit) {
++      range_ -= split;
++      value_ -= bigsplit;
++      bit = 1;
++    } else {
++      range_ = split;
++      bit = 0;
++    }
++    while (range_ < 128) {
++      range_ <<= 1;
++      value_ <<= 1;
++      count_--;
++    }
++    return bit;
++  }
++
++  unsigned int Lit(unsigned int bits) {
++    unsigned int value = 0;
++    while (bits--) {
++      value = (value << 1) | static_cast<unsigned int>(Bit(128));
++    }
++    return value;
++  }
++
++  bool Valid() const { return !error_ && (count_ >= 0 || buffer_ < end_); }
++
++ private:
++  void Fill() {
++    int shift = 64 - 8 - (count_ + 8);
++    while (shift >= 0 && buffer_ < end_) {
++      count_ += 8;
++      value_ |= static_cast<uint64_t>(*buffer_++) << shift;
++      shift -= 8;
++    }
++    if (buffer_ >= end_ && count_ < 0) {
++      error_ = true;
++    }
++  }
++
++  const uint8_t* buffer_ = nullptr;
++  const uint8_t* end_ = nullptr;
++  uint64_t value_ = 0;
++  int count_ = 0;
++  unsigned int range_ = 255;
++  bool error_ = false;
++};
++
++int Vp9ProbDelta(Vp9Bool* c) {
++  static const uint8_t kInvMap[255] = {
++      7,   20,  33,  46,  59,  72,  85,  98,  111, 124, 137, 150, 163, 176, 189,
++      202, 215, 228, 241, 254, 1,   2,   3,   4,   5,   6,   8,   9,   10,  11,
++      12,  13,  14,  15,  16,  17,  18,  19,  21,  22,  23,  24,  25,  26,  27,
++      28,  29,  30,  31,  32,  34,  35,  36,  37,  38,  39,  40,  41,  42,  43,
++      44,  45,  47,  48,  49,  50,  51,  52,  53,  54,  55,  56,  57,  58,  60,
++      61,  62,  63,  64,  65,  66,  67,  68,  69,  70,  71,  73,  74,  75,  76,
++      77,  78,  79,  80,  81,  82,  83,  84,  86,  87,  88,  89,  90,  91,  92,
++      93,  94,  95,  96,  97,  99,  100, 101, 102, 103, 104, 105, 106, 107, 108,
++      109, 110, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 125,
++      126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 138, 139, 140, 141,
++      142, 143, 144, 145, 146, 147, 148, 149, 151, 152, 153, 154, 155, 156, 157,
++      158, 159, 160, 161, 162, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173,
++      174, 175, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 190,
++      191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 203, 204, 205, 206,
++      207, 208, 209, 210, 211, 212, 213, 214, 216, 217, 218, 219, 220, 221, 222,
++      223, 224, 225, 226, 227, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238,
++      239, 240, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 253,
++  };
++  unsigned int d;
++  if (!c->Bit(128)) {
++    d = c->Lit(4);
++  } else if (!c->Bit(128)) {
++    d = c->Lit(4) + 16;
++  } else if (!c->Bit(128)) {
++    d = c->Lit(5) + 32;
++  } else {
++    d = c->Lit(7);
++    if (d >= 65) {
++      d = (d << 1) - 65 + static_cast<unsigned int>(c->Bit(128));
++    }
++    d += 64;
++    if (d >= 255) {
++      d = 254;
++    }
++  }
++  return kInvMap[d];
++}
++
++void UpdateProb(Vp9Bool* c, uint8_t* target) {
++  if (c->Bit(252)) {
++    *target = static_cast<uint8_t>(Vp9ProbDelta(c));
++  }
++}
++
++void UpdateMv(Vp9Bool* c, uint8_t* target) {
++  if (c->Bit(252)) {
++    *target = static_cast<uint8_t>((c->Lit(7) << 1) | 1);
++  }
++}
++
++// Fills |hdr| with this frame's compressed-header deltas and |reference_mode|
++// with the inter prediction mode (single, compound, or select). A frame with
++// no compressed header leaves both at zero.
++bool ParseVp9CompressedHeader(const Vp9FrameHeader& frame,
++                              struct v4l2_ctrl_vp9_compressed_hdr* hdr,
++                              uint8_t* reference_mode) {
++  *hdr = {};
++  *reference_mode = 0;
++  if (frame.header_size_in_bytes == 0) {
++    return true;
++  }
++  const size_t compressed_end =
++      frame.uncompressed_header_size + frame.header_size_in_bytes;
++  if (compressed_end < frame.uncompressed_header_size ||
++      compressed_end > frame.data.size()) {
++    return false;
++  }
++  const auto compressed = frame.data.subspan(frame.uncompressed_header_size,
++                                              frame.header_size_in_bytes);
++
++  Vp9Bool c;
++  if (!c.Init(compressed.data(), compressed.size())) {
++    return false;
++  }
++  // The marker bit must be zero.
++  if (c.Bit(128)) {
++    return false;
++  }
++
++  if (frame.quant_params.IsLossless()) {
++    hdr->tx_mode = V4L2_VP9_TX_MODE_ONLY_4X4;
++  } else {
++    hdr->tx_mode = static_cast<uint8_t>(c.Lit(2));
++    if (hdr->tx_mode == V4L2_VP9_TX_MODE_ALLOW_32X32) {
++      hdr->tx_mode = static_cast<uint8_t>(hdr->tx_mode + c.Bit(128));
++    }
++    if (hdr->tx_mode == V4L2_VP9_TX_MODE_SELECT) {
++      for (int i = 0; i < 2; i++) {
++        UpdateProb(&c, &hdr->tx8[i][0]);
++      }
++      for (int i = 0; i < 2; i++) {
++        for (int j = 0; j < 2; j++) {
++          UpdateProb(&c, &hdr->tx16[i][j]);
++        }
++      }
++      for (int i = 0; i < 2; i++) {
++        for (int j = 0; j < 3; j++) {
++          UpdateProb(&c, &hdr->tx32[i][j]);
++        }
++      }
++    }
++  }
++
++  for (unsigned int i = 0; i < 4; i++) {
++    if (c.Bit(128)) {
++      for (int j = 0; j < 2; j++) {
++        for (int k = 0; k < 2; k++) {
++          for (int l = 0; l < 6; l++) {
++            for (int m = 0; m < 6; m++) {
++              if (m >= 3 && l == 0) {
++                break;
++              }
++              for (int n = 0; n < 3; n++) {
++                UpdateProb(&c, &hdr->coef[i][j][k][l][m][n]);
++              }
++            }
++          }
++        }
++      }
++    }
++    if (hdr->tx_mode == i) {
++      break;
++    }
++  }
++
++  for (int i = 0; i < 3; i++) {
++    UpdateProb(&c, &hdr->skip[i]);
++  }
++  if (frame.IsIntra()) {
++    return c.Valid();
++  }
++
++  for (int i = 0; i < 7; i++) {
++    for (int j = 0; j < 3; j++) {
++      UpdateProb(&c, &hdr->inter_mode[i][j]);
++    }
++  }
++  if (frame.interpolation_filter == Vp9InterpolationFilter::SWITCHABLE) {
++    for (int i = 0; i < 4; i++) {
++      for (int j = 0; j < 2; j++) {
++        UpdateProb(&c, &hdr->interp_filter[i][j]);
++      }
++    }
++  }
++  for (int i = 0; i < 4; i++) {
++    UpdateProb(&c, &hdr->is_inter[i]);
++  }
++
++  const bool last_bias = frame.ref_frame_sign_bias[VP9_FRAME_LAST];
++  const bool golden_bias = frame.ref_frame_sign_bias[VP9_FRAME_GOLDEN];
++  const bool alt_bias = frame.ref_frame_sign_bias[VP9_FRAME_ALTREF];
++  unsigned int comp_pred = 0;
++  if (last_bias != golden_bias || last_bias != alt_bias) {
++    comp_pred = static_cast<unsigned int>(c.Bit(128));
++    if (comp_pred) {
++      comp_pred += static_cast<unsigned int>(c.Bit(128));
++    }
++    if (comp_pred == V4L2_VP9_REFERENCE_MODE_SELECT) {
++      for (int i = 0; i < 5; i++) {
++        UpdateProb(&c, &hdr->comp_mode[i]);
++      }
++    }
++  }
++  if (comp_pred != V4L2_VP9_REFERENCE_MODE_COMPOUND_REFERENCE) {
++    for (int i = 0; i < 5; i++) {
++      UpdateProb(&c, &hdr->single_ref[i][0]);
++      UpdateProb(&c, &hdr->single_ref[i][1]);
++    }
++  }
++  if (comp_pred != V4L2_VP9_REFERENCE_MODE_SINGLE_REFERENCE) {
++    for (int i = 0; i < 5; i++) {
++      UpdateProb(&c, &hdr->comp_ref[i]);
++    }
++  }
++
++  for (int i = 0; i < 4; i++) {
++    for (int j = 0; j < 9; j++) {
++      UpdateProb(&c, &hdr->y_mode[i][j]);
++    }
++  }
++  for (int i = 0; i < 4; i++) {
++    for (int j = 0; j < 4; j++) {
++      for (int k = 0; k < 3; k++) {
++        UpdateProb(&c, &hdr->partition[i * 4 + j][k]);
++      }
++    }
++  }
++
++  for (int i = 0; i < 3; i++) {
++    UpdateMv(&c, &hdr->mv.joint[i]);
++  }
++  for (int i = 0; i < 2; i++) {
++    UpdateMv(&c, &hdr->mv.sign[i]);
++    for (int j = 0; j < 10; j++) {
++      UpdateMv(&c, &hdr->mv.classes[i][j]);
++    }
++    UpdateMv(&c, &hdr->mv.class0_bit[i]);
++    for (int j = 0; j < 10; j++) {
++      UpdateMv(&c, &hdr->mv.bits[i][j]);
++    }
++  }
++  for (int i = 0; i < 2; i++) {
++    for (int j = 0; j < 2; j++) {
++      for (int k = 0; k < 3; k++) {
++        UpdateMv(&c, &hdr->mv.class0_fr[i][j][k]);
++      }
++    }
++    for (int j = 0; j < 3; j++) {
++      UpdateMv(&c, &hdr->mv.fr[i][j]);
++    }
++  }
++  if (frame.allow_high_precision_mv) {
++    for (int i = 0; i < 2; i++) {
++      UpdateMv(&c, &hdr->mv.class0_hp[i]);
++      UpdateMv(&c, &hdr->mv.hp[i]);
++    }
++  }
++
++  *reference_mode = static_cast<uint8_t>(comp_pred);
++  return c.Valid();
++}
+ }  // namespace
+ 
+ V4L2VideoDecoderDelegateVP9::V4L2VideoDecoderDelegateVP9(
+     V4L2DecodeSurfaceHandler* surface_handler,
+     V4L2Device* device)
+-    : surface_handler_(surface_handler), device_(device) {
+-  VLOGF(1);
++    : surface_handler_(surface_handler),
++      device_(device),
++      supports_compressed_header_(
++          device->IsCtrlExposed(V4L2_CID_STATELESS_VP9_COMPRESSED_HDR)) {
++  VLOGF(1) << "compressed_hdr=" << supports_compressed_header_;
+   DCHECK(surface_handler_);
+   DCHECK(device_);
+ 
+@@ -153,6 +451,15 @@
+   const Vp9FrameHeader* frame_hdr = pic->frame_hdr.get();
+   DCHECK(frame_hdr);
+   struct v4l2_ctrl_vp9_frame v4l2_frame_params = {};
++  struct v4l2_ctrl_vp9_compressed_hdr compressed_hdr = {};
++  uint8_t reference_mode = 0;
++  if (supports_compressed_header_) {
++    if (!ParseVp9CompressedHeader(*frame_hdr, &compressed_hdr,
++                                  &reference_mode)) {
++      VLOGF(1) << "VP9 compressed header did not parse";
++      return DecodeStatus::kFail;
++    }
++  }
+ 
+ #define SET_FLAG_IF(cond, flag) \
+   v4l2_frame_params.flags |= ((frame_hdr->cond) ? (flag) : 0)
+@@ -202,6 +509,7 @@
+   v4l2_frame_params.interpolation_filter = frame_hdr->interpolation_filter;
+   v4l2_frame_params.tile_cols_log2 = frame_hdr->tile_cols_log2;
+   v4l2_frame_params.tile_rows_log2 = frame_hdr->tile_rows_log2;
++  v4l2_frame_params.reference_mode = reference_mode;
+   for (size_t i = 0; i < Vp9RefType::VP9_FRAME_MAX - VP9_FRAME_LAST; i++) {
+     v4l2_frame_params.ref_frame_sign_bias |=
+         (frame_hdr->ref_frame_sign_bias[i + VP9_FRAME_LAST] ? (1 << i) : 0);
+@@ -249,6 +557,11 @@
+        .size = sizeof(v4l2_frame_params),
+        .ptr = &v4l2_frame_params},
+   };
++  if (supports_compressed_header_) {
++    ext_ctrls.push_back({.id = V4L2_CID_STATELESS_VP9_COMPRESSED_HDR,
++                         .size = sizeof(compressed_hdr),
++                         .ptr = &compressed_hdr});
++  }
+ 
+   const __u32 ext_ctrls_size = base::checked_cast<__u32>(ext_ctrls.size());
+   struct v4l2_ext_controls ctrls = {.count = ext_ctrls_size,
