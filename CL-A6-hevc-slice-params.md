@@ -54,7 +54,8 @@ unchanged.
 Bug: None
 Test: media_unittests --gtest_filter=V4L2HevcSliceTest.*
 Test: HEVC Main and Main 10 playback on Apple AVD (Linux arm64):
-      decodes on V4L2VideoDecoder; before, the decoder produced garbage
+      decodes on V4L2VideoDecoder; before, one frame was shown and the
+      driver timed out ("avd: Frame processing timed out")
 ```
 
 ## Tests
