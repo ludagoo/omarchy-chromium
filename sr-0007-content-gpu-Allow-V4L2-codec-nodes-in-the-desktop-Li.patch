@@ -1,4 +1,4 @@
-From 7d05f8e48ffb115c5bf50d95f9a7d8416e7732db Mon Sep 17 00:00:00 2001
+From 0c3827e5c9e4b9bb82bfb2cdf4e586a0e66d68c7 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:21:58 -0300
 Subject: [PATCH 07/12] content/gpu: Allow V4L2 codec nodes in the desktop

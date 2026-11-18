@@ -1,4 +1,4 @@
-From 8c098cce80f33c2db6060057d3ff6ffbb2a7fb1d Mon Sep 17 00:00:00 2001
+From 33fe15170c9b44dca120781a9c3ae3e81e40d8df Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:56:25 -0300
 Subject: [PATCH 08/12] room: Build the V4L2 encoder on desktop Linux
