@@ -1,0 +1,104 @@
+Desktop Linux keeps the V4L2 encoder on CPU NV12.
+
+Mesa GBM rejects NV12, and headless ozone exports no dmabuf, so the
+WebCodecs adapter stays on shared memory. The encoder's image processor
+writes a CPU frame and queues it as USERPTR. apple-ave copies that
+pointer during QBUF, so any directly readable frame is usable. ChromeOS
+still uses the platform layout and DMA-BUF.
+
+--- a/media/gpu/v4l2/v4l2_video_encode_accelerator.cc
++++ b/media/gpu/v4l2/v4l2_video_encode_accelerator.cc
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ #include "media/gpu/v4l2/v4l2_video_encode_accelerator.h"
++#include "build/build_config.h"
+ 
+ #include <fcntl.h>
+ #include <linux/videodev2.h>
+@@ -508,9 +509,29 @@
+     return false;
+   }
+ 
+-  auto platform_layout = GetPlatformVideoFrameLayout(
+-      output_format, output_size,
+-      gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE);
++  std::optional<VideoFrameLayout> platform_layout;
++  VideoFrame::StorageType output_storage_type =
++      VideoFrame::STORAGE_MAPPABLE_SHARED_IMAGE;
++#if BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS)
++  if (!native_input_mode_) {
++    // Mesa GBM rejects NV12. LibYUV converts into a CPU frame and the
++    // encoder imports that frame as USERPTR.
++    auto cpu_frame = VideoFrame::CreateFrame(
++        output_format, output_size, output_visible_rect,
++        output_visible_rect.size(), base::TimeDelta());
++    if (!cpu_frame) {
++      LOG(ERROR) << "Failed to allocate a CPU image-processor frame";
++      return false;
++    }
++    platform_layout = cpu_frame->layout();
++    output_storage_type = VideoFrame::STORAGE_OWNED_MEMORY;
++  }
++#endif
++  if (!platform_layout) {
++    platform_layout = GetPlatformVideoFrameLayout(
++        output_format, output_size,
++        gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE);
++  }
+   if (!platform_layout) {
+     LOG(ERROR) << "Failed to get Platform VideoFrameLayout";
+     return false;
+@@ -523,7 +544,7 @@
+   }
+   auto output_config =
+       VideoFrameLayoutToPortConfig(*output_layout, output_visible_rect,
+-                                   VideoFrame::STORAGE_MAPPABLE_SHARED_IMAGE);
++                                   output_storage_type);
+   if (!output_config) {
+     LOG(ERROR) << "Failed to create ImageProcessor output config";
+     return false;
+@@ -589,6 +610,13 @@
+                 gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE,
+                 sii_.get());
+         break;
++      case VideoFrame::STORAGE_OWNED_MEMORY:
++      case VideoFrame::STORAGE_SHMEM:
++        image_processor_output_buffers_[i] = VideoFrame::CreateFrame(
++            output_config.fourcc.ToVideoPixelFormat(), output_config.size,
++            output_config.visible_rect, output_config.visible_rect.size(),
++            base::TimeDelta());
++        break;
+       default:
+         LOG(ERROR) << "Unsupported output storage type of image processor: "
+                    << output_config.storage_type;
+@@ -1603,9 +1631,11 @@
+ 
+   switch (input_buf.Memory()) {
+     case V4L2_MEMORY_USERPTR: {
+-      if (frame->storage_type() != VideoFrame::STORAGE_SHMEM) {
++      // LibYUV's output is owned CPU memory. The driver copies USERPTR
++      // during QBUF, so any directly readable frame is usable.
++      if (!frame->HasDirectCpuAccess()) {
+         SetErrorState({EncoderStatus::Codes::kInvalidInputFrame,
+-                       "VideoFrame doesn't have shared memory"});
++                       "VideoFrame is not CPU-readable"});
+         return false;
+       }
+ 
+
+--- a/media/video/video_encode_accelerator_adapter.cc
++++ b/media/video/video_encode_accelerator_adapter.cc
+@@ -503,7 +503,11 @@
+ #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ 
+   auto storage_type = VideoEncodeAccelerator::Config::StorageType::kShmem;
+-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS)
++  // Mesa GBM on this machine rejects NV12, and the headless ozone pixmap
++  // exports no dmabuf. CPU NV12 is queued to the V4L2 encoder as USERPTR.
++  input_buffer_preference_ = InputBufferKind::CpuMemBuf;
++#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+   // Linux/ChromeOS require a special configuration to use dmabuf storage.
+   // We need to keep sending frames with the same storage type.
+   // Other platforms will happily mix GpuMemoryBuffer storage with shared-mem
