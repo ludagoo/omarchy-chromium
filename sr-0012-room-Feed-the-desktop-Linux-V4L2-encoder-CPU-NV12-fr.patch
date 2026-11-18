@@ -1,4 +1,4 @@
-From 14139942dcd055062307ed50d07ec38c1e7923b6 Mon Sep 17 00:00:00 2001
+From df3d4a36957aaaf013c91691c8f681f463167969 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 19:00:02 -0300
 Subject: [PATCH 12/12] room: Feed the desktop Linux V4L2 encoder CPU NV12

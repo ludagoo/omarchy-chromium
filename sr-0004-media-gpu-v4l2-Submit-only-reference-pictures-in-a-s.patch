@@ -1,4 +1,4 @@
-From f6a6c40b19fa99e65cd1e55294f3b821da59d122 Mon Sep 17 00:00:00 2001
+From 9ab31ed9eeded508dc9369c38d357230e21b6871 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:17:10 -0300
 Subject: [PATCH 04/12] media/gpu/v4l2: Submit only reference pictures in a
@@ -23,8 +23,10 @@ receiving every picture, ACTIVE only for references, as before.
 
 Bug: None
 Test: media_unittests --gtest_filter=V4L2H264SliceTest.*
-Test: H.264 High clips with B-frames on Apple AVD (Linux arm64): no
-      corrupted P/B frames, no rejected requests
+Test: H.264 High 1080p and 2160p clips on Apple AVD (Linux arm64):
+      play to the end on V4L2VideoDecoder; before, the decoder hung
+      once a non-reference picture kept for display sat in front of a
+      reference in the DPB
 Assisted-by: Claude:claude-opus-5-5
 ---
  media/gpu/v4l2/v4l2_h264_slice.cc             | 15 +++++++++++++++

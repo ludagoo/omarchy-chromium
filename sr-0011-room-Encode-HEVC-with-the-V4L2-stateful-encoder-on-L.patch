@@ -1,4 +1,4 @@
-From ea8bf86f81b0e283a8d8b6d673b4495a956686b7 Mon Sep 17 00:00:00 2001
+From 2102f6af797daa8cfe928fc8a29af56f207c4478 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:57:28 -0300
 Subject: [PATCH 11/12] room: Encode HEVC with the V4L2 stateful encoder on
