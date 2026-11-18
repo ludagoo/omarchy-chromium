@@ -1,7 +1,8 @@
 post_install() {
   udevadm control --reload-rules || true
-  # The rules match ACTION=="add". A plain trigger sends "change" and
-  # leaves the symlinks missing until the next real device add.
+  # add creates the links for nodes that are already enumerated.
+  # The rules also match change, so the pacman udev hook that follows
+  # this script (a plain trigger) cannot drop them.
   udevadm trigger --action=add --subsystem-match=video4linux --subsystem-match=media || true
 }
 

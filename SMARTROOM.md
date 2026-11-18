@@ -2,7 +2,7 @@
 
 Branch `smartroom/v4l2-direct` of [ludagoo/omarchy-chromium](https://github.com/ludagoo/omarchy-chromium), cut from `smartroom/v4l2` at `8d21064`. That parent is Chromium 148.0.7778.96 with VA-API decode kept and a V4L2 stateful encoder added. This branch turns VA-API off on arm64 and uses Chromium's own V4L2 decoder and encoder.
 
-Package: `omarchy-chromium-smartroom-v4l2-direct` 148.0.7778.96-24. `pkgrel=24` sorts above Omarchy's `omarchy-chromium-bin` 148.0.7778.96-22 and above the previous test package `-23`. It `provides` `chromium` and `omarchy-chromium`, and `conflicts` / `replaces` `omarchy-chromium-bin`.
+Package: `omarchy-chromium-smartroom-v4l2-direct` 148.0.7778.96-25. `pkgrel=25` sorts above Omarchy's `omarchy-chromium-bin` 148.0.7778.96-22 and above the previous test packages `-23` and `-24`. It `provides` `chromium` and `omarchy-chromium`, and `conflicts` / `replaces` `omarchy-chromium-bin`. `-25` is `-24` plus udev rules that match `change`, so pacman's udev hook does not drop the codec symlinks.
 
 The x86_64 `PKGBUILD` is not modified. New patches are inert there: `use_v4l2_codec` stays false, `UseV4L2Codec()` returns false, and `AcceleratedVideoDecoder` stays on because `use_vaapi` is true.
 
@@ -47,17 +47,18 @@ Compile fixes kept from the parent branch: `005-unbundle-libpng-testonly.patch`,
 
 | Match | Symlink |
 | --- | --- |
-| `SUBSYSTEM=="video4linux"`, `ATTR{name}=="avd"` | `/dev/video-dec0` |
-| `SUBSYSTEM=="media"`, `ATTR{model}=="avd"` | `/dev/media-dec0` |
-| `SUBSYSTEM=="video4linux"`, `ATTR{name}=="apple-ave"` | `/dev/video-encN` for the first free N in 0..4 |
-
-The encoder index comes from `/usr/lib/chromium/chromium-v4l2-enc-index`. It takes `flock` on `/run/lock/chromium-v4l2-enc.lock` and prints one integer. udev turns that into `%c`. Two AVE nodes (the M2 has `40d100000.video-codec` and `507100000.video-codec`) get `video-enc0` and `video-enc1`. A node past index 4 would be invisible to the broker, so the helper exits 1 and udev skips the symlink.
+| `SUBSYSTEM=="video4linux"`, `ATTR{name}=="avd"`, `ACTION=="add\|change"` | `/dev/video-dec0` |
+| `SUBSYSTEM=="media"`, `ATTR{model}=="avd"`, `ACTION=="add\|change"` | `/dev/media-dec0` |
+| `ATTR{name}=="apple-ave"`, `KERNELS=="40d100000.video-codec"` | `/dev/video-enc0` |
+| `ATTR{name}=="apple-ave"`, `KERNELS=="507100000.video-codec"` | `/dev/video-enc1` |
 
 The symlinks do not change the target mode. The nodes are `root:video` mode `0660` with the seat `uaccess` ACL. The rules add `TAG+="uaccess"` as well. The kiosk user is in group `video`. v4l2loopback cameras are not matched: their sysfs name is not `avd` or `apple-ave`.
 
-`chromium-v4l2.install` reloads udev and runs `udevadm trigger --action=add` for `video4linux` and `media` on install, upgrade, and removal. The rules match `ACTION=="add"`. A trigger without `--action=add` sends `change` and does not create the symlinks. Checked on the Studio: after `--action=add`, `/dev/video-dec0` points at `video0` and `/dev/media-dec0` points at `media0`.
+`chromium-v4l2.install` reloads udev and runs `udevadm trigger --action=add` for `video4linux` and `media` on install, upgrade, and removal. The rules match `add` and `change`. That second action is required: pacman's udev hook runs a plain `udevadm trigger` after the install script, and a change event drops symlinks whose rules matched only `add`. Checked on the Studio with package 24: `post_install` created `/dev/video-dec0`, and the hook removed it. After the rules matched both actions, a plain trigger left `/dev/video-dec0` -> `video0`, `/dev/media-dec0` -> `media0`, `/dev/video-enc0` -> the `40d100000` encoder, and `/dev/video-enc1` -> the `507100000` encoder.
 
-Checked on the Studio before the build: `/dev/video0` is `ATTR{name}=="avd"` at `287080000.avd`, and `/dev/media0` is `ATTR{model}=="avd"`. AVE is not bound on this firmware. The expected runtime result is an empty encoder list and a browser that still plays and joins a meeting.
+The encoder index is the platform address, not a first-free counter. On a change event the old symlink still exists while a `PROGRAM` helper runs, so both nodes can choose the same index. The M2's two engines are `40d100000.video-codec` and `507100000.video-codec`.
+
+Checked on the Studio: `/dev/video0` is `ATTR{name}=="avd"` at `287080000.avd`, and `/dev/media0` is `ATTR{model}=="avd"`. On the boot used for the package test, `apple-ave` was bound on both engines (NV12 in, stateful H.264 and HEVC out). One engine had already failed its firmware handshake in dmesg (`status 0x2e`). The browser must ignore an encoder it cannot open and keep playing.
 
 AVD's media controller `bus_info` is `platform:avd` and the driver name is `avd`, matching the video node, so `GetRequestsQueue()` pairs them.
 
@@ -82,7 +83,7 @@ Chromium 148 renamed the unbundle library from `harfbuzz-ng` to `harfbuzz`. `PKG
 Keep the stock package file so it can be installed again:
 
 ```
-sudo pacman -U omarchy-chromium-smartroom-v4l2-direct-148.0.7778.96-24-aarch64.pkg.tar.zst
+sudo pacman -U omarchy-chromium-smartroom-v4l2-direct-148.0.7778.96-25-aarch64.pkg.tar.xz
 ```
 
 The Room Controller relaunches Chromium. Then:

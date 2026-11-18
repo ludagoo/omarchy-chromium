@@ -18,8 +18,8 @@ Apple AVD is a stateless request-API decoder. Its video node name is `avd`, and 
 | `012-linux-v4l2-gpu-sandbox.patch` | When the binary is built with V4L2, the desktop Linux GPU broker allows those ChromeOS names and then still allows the DRM render nodes. `UseV4L2Codec()` is false when `USE_V4L2_CODEC` is unset, so a VA-API x86_64 build does not gain these paths. |
 | `013-v4l2-decode-feature-default.patch` | `AcceleratedVideoDecoder` defaults on when VA-API or V4L2 is compiled in. Encode stays off until `AcceleratedVideoEncoder` is passed, which the Omarchy kiosk already passes. |
 | `004-linux-v4l2-encode-keep-vaapi.patch` | Builds `v4l2_video_encode_accelerator.cc` on Linux and registers that encoder. With `use_vaapi=false`, the existing decoder `#elif USE_V4L2_CODEC` selects `V4L2VideoDecoder`. AVD's slice and frame fourccs make `IsV4L2DecoderStateful()` return false, so the stateless backend is used. |
-| `chromium-v4l2.rules` | Symlinks the `avd` video node to `/dev/video-dec0` and the `avd` media node to `/dev/media-dec0`. Each `apple-ave` node gets `/dev/video-enc0` through `/dev/video-enc4` via `chromium-v4l2-enc-index`. Other SoCs need their own matches. |
-| `chromium-v4l2.install` | Reloads udev on install, upgrade, and removal so the symlinks appear without a reboot. |
+| `chromium-v4l2.rules` | Symlinks the `avd` video node to `/dev/video-dec0` and the `avd` media node to `/dev/media-dec0`. The two M2 `apple-ave` nodes are pinned to `/dev/video-enc0` and `/dev/video-enc1` by platform address. The rules match `add` and `change`, because a later change event drops a symlink whose rule matched only `add`. Other SoCs need their own matches. |
+| `chromium-v4l2.install` | Reloads udev and sends an `add` trigger on install, upgrade, and removal so the symlinks appear without a reboot. |
 
 ## ✨ Features
 

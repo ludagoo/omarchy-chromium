@@ -3,7 +3,7 @@
 
 pkgname=omarchy-chromium-smartroom-v4l2-direct
 pkgver=148.0.7778.96
-pkgrel=24
+pkgrel=25
 _launcher_ver=8
 _manual_clone=0
 _system_clang=1
@@ -680,8 +680,6 @@ package() {
   # ChromeOS-style codec node names. See chromium-v4l2.rules.
   install -Dm644 "$startdir/chromium-v4l2.rules" \
     "$pkgdir/usr/lib/udev/rules.d/70-chromium-v4l2.rules"
-  install -Dm755 "$startdir/chromium-v4l2-enc-index" \
-    "$pkgdir/usr/lib/chromium/chromium-v4l2-enc-index"
 }
 
 # vim:set ts=2 sw=2 et:
