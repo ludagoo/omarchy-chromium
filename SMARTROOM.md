@@ -94,3 +94,5 @@ The Room Controller relaunches Chromium. Then:
 4. One Zoom test meeting still connects. Encode of the meeting stays on OpenH264 until an `apple-ave` node exists.
 
 Roll back with the saved `omarchy-chromium-bin` package if decode falls back to software, frames drop, or the meeting breaks.
+
+Studio test of the 148.0.7778.96-24 binary (udev rule from this commit, AVE bound): `chrome://gpu` listed H.264, VP9 profile 0 and 2, and HEVC Main / Main 10, and the encoding list was empty (`GetSupportedProfiles()` kept coming back empty). VP9 profile 0 at 1080p and 4K played on `V4L2VideoDecoder` with 0 dropped frames. H.264 selected `V4L2VideoDecoder` and fell back to `FFmpegVideoDecoder` after "video decoder fallback after initial decode error." HEVC stayed on `V4L2VideoDecoder` and presented 1 frame; the kernel logged `avd: Frame processing timed out` and `H0 error`. VP9 profile 2 did not leave time 0. The direct package was removed after that run. Stock `omarchy-chromium-bin` 148.0.7778.96-22 is what the Studio is running. The meeting was not run on the direct binary.
