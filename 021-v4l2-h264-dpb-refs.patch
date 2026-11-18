@@ -1,0 +1,45 @@
+Send only H.264 reference pictures in the stateless DPB.
+
+Chromium marked every picture in the decoded-picture buffer VALID, and
+ACTIVE only when the picture was a reference. The kernel counts ACTIVE
+entries. Apple's decoder walks every VALID entry, sizes that table from
+the ACTIVE count, and the slice then names a slot by the client's index.
+A non-reference kept for display can sit in front of a real reference, so
+the index falls off the end of the table and the firmware never finishes
+the frame. The VA-API shim packs references only, each one VALID and
+ACTIVE. The slice lists already index that same array, so the slot numbers
+stay consistent.
+
+This is the stateless H.264 uAPI, not an Apple-only change. The hang shows
+up on Apple because that driver sizes the firmware table from the ACTIVE
+count while still walking every VALID entry. A frame-based device is
+unchanged: it does not use these slot numbers.
+
+--- a/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc	2026-11-18 14:13:37.752323308 -0300
++++ b/media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc	2026-11-18 14:13:59.409850200 -0300
+@@ -385,6 +385,16 @@
+   priv_->dpb_pics.clear();
+   size_t i = 0;
+   for (const auto& pic : dpb) {
++    // The V4L2 DPB is the reference list the slice indexes into. A picture
++    // kept only so it can be displayed is not a reference. The kernel counts
++    // ACTIVE entries, and Apple's decoder walks every VALID entry but sizes
++    // that table from the ACTIVE count. A non-reference in front of a real
++    // reference makes the slice name a slot past the end of the table, and
++    // the firmware never finishes the frame. The VA-API shim packs the same
++    // list: references only, each one VALID and ACTIVE.
++    if (!pic->ref) {
++      continue;
++    }
+     if (i >= std::size(priv_->v4l2_decode_param.dpb)) {
+       VLOGF(1) << "Invalid DPB size";
+       break;
+@@ -417,7 +427,7 @@
+     entry.top_field_order_cnt = pic->top_field_order_cnt;
+     entry.bottom_field_order_cnt = pic->bottom_field_order_cnt;
+     entry.flags = V4L2_H264_DPB_ENTRY_FLAG_VALID |
+-                  (pic->ref ? V4L2_H264_DPB_ENTRY_FLAG_ACTIVE : 0) |
++                  V4L2_H264_DPB_ENTRY_FLAG_ACTIVE |
+                   (pic->long_term ? V4L2_H264_DPB_ENTRY_FLAG_LONG_TERM : 0);
+   }
+ 
