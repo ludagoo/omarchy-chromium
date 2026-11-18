@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>ms-receiver</title>
+<video id="remote" autoplay muted playsinline style="width:640px"></video>
+<pre id="log"></pre>
+<script>
+const logEl = document.getElementById('log');
+const log = (m) => { logEl.textContent += m + '\n'; console.log(m); };
+const ws = new WebSocket('ws://127.0.0.1:8771');
+const pc = new RTCPeerConnection({iceServers: []});
+window.__pc = pc;
+pc.ontrack = (e) => {
+  document.getElementById('remote').srcObject = e.streams[0];
+  log('track ' + e.track.kind);
+};
+pc.onicecandidate = (e) => {
+  if (e.candidate) ws.send(JSON.stringify({candidate: e.candidate}));
+};
+ws.onopen = async () => {
+  try {
+    const cap = await navigator.mediaDevices.getUserMedia({video: true, audio: false});
+    cap.getTracks().forEach((t) => t.stop());
+    log('captured');
+  } catch (err) {
+    log('capture ' + err);
+  }
+  ws.send(JSON.stringify({role: 'receiver'}));
+};
+ws.onmessage = async (ev) => {
+  const msg = JSON.parse(ev.data);
+  if (msg.sdp) {
+    await pc.setRemoteDescription(msg.sdp);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    ws.send(JSON.stringify({sdp: pc.localDescription}));
+    const lines = pc.localDescription.sdp.split('\n').filter((l) => /H264|profile-level-id/i.test(l));
+    log('answer sent ' + lines.map((l) => l.trim()).join(' || '));
+    setTimeout(report, 1000 * (+new URLSearchParams(location.search).get('t') || 20));
+  } else if (msg.candidate) {
+    try { await pc.addIceCandidate(msg.candidate); } catch (err) { log('ice ' + err); }
+  }
+};
+async function report() {
+  const stats = await pc.getStats();
+  const out = [];
+  stats.forEach((r) => {
+    if (r.type === 'inbound-rtp' && r.kind === 'video') {
+      out.push({
+        decoder: r.decoderImplementation || '',
+        power: r.powerEfficientDecoder,
+        framesDecoded: r.framesDecoded,
+        framesDropped: r.framesDropped,
+        width: r.frameWidth,
+        height: r.frameHeight,
+        fps: r.framesPerSecond,
+        key: r.keyFramesDecoded,
+        codec: (stats.get(r.codecId) || {}).sdpFmtpLine || ''
+      });
+    }
+  });
+  const video = document.getElementById('remote');
+  const q = video.getVideoPlaybackQuality ? video.getVideoPlaybackQuality() : {};
+  const body = {
+    inbound: out,
+    video: {
+      size: video.videoWidth + 'x' + video.videoHeight,
+      t: video.currentTime,
+      frames: q.totalVideoFrames,
+      dropped: q.droppedVideoFrames
+    }
+  };
+  log('STATS ' + JSON.stringify(body));
+  await fetch('/stats', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  log('posted');
+}
+</script>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>ms-sender</title>
+<video id="local" autoplay muted playsinline style="width:320px"></video>
+<pre id="log"></pre>
+<script>
+const logEl = document.getElementById('log');
+const log = (m) => { logEl.textContent += m + '\n'; console.log(m); };
+const ws = new WebSocket('ws://127.0.0.1:8771');
+const pc = new RTCPeerConnection({iceServers: []});
+const pending = [];
+ws.onopen = async () => {
+  ws.send(JSON.stringify({role: 'sender'}));
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videos = devices.filter((d) => d.kind === 'videoinput');
+    log('cameras ' + videos.map((d) => d.label || d.deviceId).join(' | '));
+    const prefer = videos.find((d) => /logitech|c930|lumens|aver|inogeni|fake/i.test(d.label)) || videos[0];
+    const video = {
+      width: {ideal: 1280},
+      height: {ideal: 720},
+      frameRate: {ideal: 15}
+    };
+    if (prefer) video.deviceId = {exact: prefer.deviceId};
+    const stream = await navigator.mediaDevices.getUserMedia({audio: false, video});
+    document.getElementById('local').srcObject = stream;
+    const track = stream.getVideoTracks()[0];
+    log('sending ' + (track.label || '') + ' ' + JSON.stringify(track.getSettings()));
+    window.__pc = pc;
+    const tx = pc.addTransceiver(track, {
+      direction: 'sendonly',
+      sendEncodings: [{maxBitrate: 2500000, scaleResolutionDownBy: 1}]
+    });
+    const caps = RTCRtpSender.getCapabilities('video');
+    const one = new URLSearchParams(location.search).has('one');
+    const h264 = caps.codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264' && /packetization-mode=1/.test(c.sdpFmtpLine || '')
+        && (!one || /profile-level-id=42e01f/.test(c.sdpFmtpLine || '')));
+    if (!h264.length) throw new Error('no h264 codec');
+    tx.setCodecPreferences(h264);
+    log('h264 codecs ' + h264.map((c) => c.sdpFmtpLine || c.mimeType).join(' ; '));
+    pc.onicecandidate = (e) => {
+      if (e.candidate) ws.send(JSON.stringify({candidate: e.candidate}));
+    };
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    ws.send(JSON.stringify({sdp: pc.localDescription}));
+    const lines = pc.localDescription.sdp.split('\n').filter((l) => /H264|packetization-mode|profile-level-id/i.test(l));
+    log('sdp ' + lines.map((l) => l.trim()).join(' || '));
+    log('offer sent');
+    try {
+      const params = tx.sender.getParameters();
+      params.degradationPreference = 'maintain-resolution';
+      if (params.encodings && params.encodings[0]) {
+        params.encodings[0].maxBitrate = 2500000;
+        params.encodings[0].scaleResolutionDownBy = 1;
+      }
+      await tx.sender.setParameters(params);
+      log('params ' + JSON.stringify(params.encodings));
+    } catch (err) {
+      log('params fail ' + err);
+    }
+    setTimeout(async () => {
+      const stats = await pc.getStats();
+      const out = [];
+      stats.forEach((r) => {
+        if (r.type === 'outbound-rtp' && r.kind === 'video') {
+          out.push({
+            encoder: r.encoderImplementation || '',
+            power: r.powerEfficientEncoder,
+            width: r.frameWidth,
+            height: r.frameHeight,
+            fps: r.framesPerSecond,
+            frames: r.framesEncoded
+          });
+        }
+      });
+      log('ENCODER ' + JSON.stringify(out));
+      await fetch('/sender-stats', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(out)});
+    }, 20000);
+  } catch (err) {
+    log('SEND_FAIL ' + err);
+    fetch('/sender-stats', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({error: String(err)})}).catch(() => {});
+  }
+};
+ws.onmessage = async (ev) => {
+  const msg = JSON.parse(ev.data);
+  if (msg.sdp) {
+    await pc.setRemoteDescription(msg.sdp);
+    const lines = (msg.sdp.sdp || '').split('\n').filter((l) => /H264|packetization-mode|profile-level-id/i.test(l));
+    log('answer-sdp ' + lines.map((l) => l.trim()).join(' || '));
+    log('answer set');
+  } else if (msg.candidate) {
+    await pc.addIceCandidate(msg.candidate);
+  }
+};
+</script>

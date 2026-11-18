@@ -1,0 +1,85 @@
+# CL A3: media/gpu/v4l2: Support slice-based stateless H.264 decoders
+
+Prepared, not uploaded. Lucas uploads after an independent review and after
+the contributor agreement is on file (see REPORT.md).
+
+- Base: Chromium main `98478f51939a` (18 November 2026).
+- Patch: `upstream/0003-h264-slice-based.patch` on branch `smartroom/upstream-main` of
+  github.com/ludagoo/omarchy-chromium. Studio branch
+  `smartroom/v4l2-upstream` in
+  `/var/lib/srbuild/chromium-main/src`.
+- Order: Needs nothing below it. A4 and A5 build on it.
+- Reviewers: one of `frkoenig@chromium.org`, `nhebert@chromium.org`
+  (`media/gpu/v4l2/OWNERS`).
+
+Files:
+
+    media/gpu/v4l2/BUILD.gn                                |   3 +
+    media/gpu/v4l2/v4l2_h264_slice.cc                      | 194 +++++++++++++++++++++++++++++++++++++
+    media/gpu/v4l2/v4l2_h264_slice.h                       |  65 +++++++++++++
+    media/gpu/v4l2/v4l2_h264_slice_unittest.cc             | 109 +++++++++++++++++++++
+    media/gpu/v4l2/v4l2_video_decoder_backend_stateless.cc |  10 ++
+    media/gpu/v4l2/v4l2_video_decoder_delegate_h264.cc     | 143 ++++++++++++++++++++++++---
+    media/gpu/v4l2/v4l2_video_decoder_delegate_h264.h      |   3 +
+
+## Description for Gerrit
+
+Paste this as the change description. `git cl upload` adds the `Change-Id`.
+Add one sentence in Lucas's own words on which parts an AI assistant drafted.
+
+```
+media/gpu/v4l2: Support slice-based stateless H.264 decoders
+
+The V4L2 H.264 delegate always sets V4L2_CID_STATELESS_H264_DECODE_MODE
+to FRAME_BASED, always prepends a 3-byte start code, and never sends
+V4L2_CID_STATELESS_H264_SLICE_PARAMS. That matches the frame-based
+ChromeOS decoders, and also Hantro, rkvdec, MediaTek and Tegra on
+mainline. A driver whose only mode is SLICE_BASED, such as cedrus and
+Apple's AVD, rejects the request and nothing decodes.
+
+Query the default of DECODE_MODE and START_CODE once. For a
+frame-based device nothing changes: the DPB and decode parameters are
+filled as before, the start code is the Annex-B default, and the
+DECODE_MODE control is still sent with each request.
+
+For a slice-based device:
+- RequiresRefLists() returns true so H264Decoder builds
+  RefPicList0/1.
+- Each slice fills v4l2_ctrl_h264_slice_params (and pred weights when
+  the PPS uses them). Reference lists name slots in the DPB array
+  submitted in the same request. When num_ref_idx_active exceeds the
+  pictures available early in a GOP, the spare slots repeat the last
+  real reference; the bitstream does not address them, but the driver
+  validates every active index.
+- DECODE_MODE is left at the driver's default.
+- A picture with more than one slice fails for now. Holding the
+  CAPTURE buffer across several requests is a follow-up change.
+
+START_CODE_NONE is honored in both modes. A raw NAL is submitted
+without trailing zero bytes, which are the next start code's zero_byte
+and which a slice-based decoder reads as slice data.
+
+The stateless backend also zeroes up to 64 bytes after the bitstream,
+outside bytesused. Some stateless decoders prefetch past the end of the
+slice; libva-v4l2-request does the same.
+
+Bug: None
+Test: media_unittests --gtest_filter=V4L2H264SliceTest.*
+Test: H.264 playback on Apple AVD (slice-based, START_CODE_NONE,
+      Linux arm64): decodes on V4L2VideoDecoder; before, every request
+      was rejected
+```
+
+## Tests
+
+- Unit: `media_unittests --gtest_filter='V4L2H264SliceTest.*'` (built with `use_v4l2_codec=true`; no device needed).
+- Try bot: `linux-v4l2-codec-rel` compiles this configuration. It does not play video.
+- Hardware: see "Results on main" below.
+
+## Evidence from the 148 port
+
+On 148 (patch 017 + 019): H.264 decodes on V4L2VideoDecoder on AVD; before, every request was rejected and the player fell back to FFmpeg. The supervisor's Zoom Meeting SDK check (18 Nov, 148 build with A3-A5, /dev/video-dec0 link made by hand) decoded three inbound 320x180 H.264 streams on V4L2VideoDecoder, 0 dropped, about 0.9 ms per frame.
+
+## Results on main
+
+Pending: the Studio build of `smartroom/v4l2-test` (`out/v4l2-a`).
