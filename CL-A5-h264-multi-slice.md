@@ -84,4 +84,4 @@ On 148 (multi-slice branch): 4-slice clip 120 frames, 6 dropped; 6-29 slices per
 
 ## Results on main
 
-Pending: the Studio build of `smartroom/v4l2-test` (`out/v4l2-a`).
+Unit: `media_unittests --gtest_filter='*V4L2*' --single-process-tests`: 29 of 29 passed (results/main-media_unittests-v4l2.txt). `v4l2_unittest`: its 7 tests are skipped on this platform (ChromeOS flat decoder and minigbm tests), none failed. Playback: 4 slices per picture, 120 of 120 frames (7 dropped); 6 to 29 slices per picture, 120 of 120 (9 dropped), both on `V4L2VideoDecoder`. The log shows `hold_capture=1 capabilities=253` and `Submitting 4 H.264 slices, holding the capture buffer until the last`. For comparison, stock Arch Linux ARM Chromium 157.0.8103.78 on the same machine and flags: both clips on `FFmpegVideoDecoder`.

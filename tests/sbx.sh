@@ -4,7 +4,7 @@ CH=$1; PORT=$2; N=sbx-$PORT
 U=smartroomcontroller; UH=/home/$U; RUN=/run/user/$(id -u $U)
 WL=$(ls $RUN | grep -m1 -E '^wayland-[0-9]+$'); SIG=$(ls -t $RUN/hypr | head -1)
 D=$UH/.cache/sr-upstream/$N; rm -rf $D; runuser -u $U -- mkdir -p $D
-runuser -u $U -- env XDG_RUNTIME_DIR=$RUN WAYLAND_DISPLAY=$WL HYPRLAND_INSTANCE_SIGNATURE=$SIG HOME=$UH "$CH" --enable-gpu --use-gl=angle --use-angle=gles-egl --render-node-override=/dev/dri/renderD128 --enable-features=AcceleratedVideoDecoder --ozone-platform=wayland --remote-debugging-port=$PORT --user-data-dir=$D --no-first-run --class=sr-upstream-sbx --window-size=320,200 about:blank >$D.err 2>&1 &
+runuser -u $U -- env XDG_RUNTIME_DIR=$RUN WAYLAND_DISPLAY=$WL HYPRLAND_INSTANCE_SIGNATURE=$SIG HOME=$UH "$CH" --enable-gpu --use-gl=angle --use-angle=gles-egl --render-node-override=/dev/dri/renderD128 --enable-features=AcceleratedVideoDecoder --ozone-platform=wayland --enable-logging=stderr --vmodule=*sandbox*=3,gpu_init=3,gpu_main=3,*egl*=2,*angle*=2,gl_*=2,v4l2_codec_nodes=1 ${SBX_EXTRA:-} --remote-debugging-port=$PORT --user-data-dir=$D --no-first-run --class=sr-upstream-sbx --window-size=320,200 about:blank >$D.err 2>&1 &
 P=$!; sleep 8
 for p in $(pgrep -u $U -f "user-data-dir=$D"); do
   c=$(tr '\0' ' ' </proc/$p/cmdline); t=$(echo "$c" | grep -o -- '--type=[a-z-]*'); 

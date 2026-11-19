@@ -64,12 +64,15 @@ both set, the scan finds nothing on a machine without V4L2 codecs.
 
 Bug: None
 Test: media_unittests --gtest_filter=V4L2CodecNodesTest.*
-Test: Linux arm64 (Apple M2 Max, kernel 7.2): the pre-sandbox scan
-      lists /dev/video0 + /dev/media0 (AVD) and /dev/video10, 11 (AVE)
-      and not the four v4l2loopback cameras; H.264 plays on
-      V4L2VideoDecoder. The sandbox-engaged case could not be run on
-      this machine: with --gpu-sandbox-start-early the GPU process
-      cannot dlopen libEGL.so.1 (with or without this change)
+Test: Linux arm64 (Apple M2 Max, kernel 7.2, Mesa asahi), with
+      --gpu-sandbox-start-early so that the sandbox engages: the scan
+      allows /dev/video0 + /dev/media0 (AVD) and /dev/video10,
+      /dev/video11 (AVE), not the v4l2loopback cameras
+      /dev/video20-23. The GPU process then exits because it cannot
+      dlopen libEGL.so.1, as stock Chromium 157 does
+Test: same machine, default flags: the sandbox does not engage
+      ("called with multiple threads") and the scan does not run;
+      with the A changes, H.264, HEVC and VP9 play on V4L2VideoDecoder
 ```
 
 ## Tests
@@ -84,4 +87,4 @@ Not a fix for what broke on 148: that was our patch 011 (ChromeOS names only). O
 
 ## Results on main
 
-Pending: the Studio build of `smartroom/v4l2-test` (`out/v4l2-a`).
+Unit: `media_unittests --gtest_filter='*V4L2*' --single-process-tests`: 29 of 29 passed (results/main-media_unittests-v4l2.txt). `v4l2_unittest`: its 7 tests are skipped on this platform (ChromeOS flat decoder and minigbm tests), none failed. With `--gpu-sandbox-start-early` (the GPU sandbox engages, `Seccomp: 2`), the pre-sandbox scan logged `V4L2 codec node for the GPU sandbox:` `/dev/video0`, `/dev/video10`, `/dev/video11` and `V4L2 media node for the GPU sandbox: /dev/media0`, and none of the v4l2loopback cameras `/dev/video20`-`23`. The GPU process then exits (`Could not dlopen native EGL: libEGL.so.1`), as stock 157 does with that switch. With default switches the sandbox does not engage (`InitializeSandbox() called with multiple threads in process gpu-process`), the scan does not run, and decoding works with or without this change.

@@ -84,4 +84,4 @@ On 148 (patch 017 + 019): H.264 decodes on V4L2VideoDecoder on AVD; before, ever
 
 ## Results on main
 
-Pending: the Studio build of `smartroom/v4l2-test` (`out/v4l2-a`).
+Unit: `media_unittests --gtest_filter='*V4L2*' --single-process-tests`: 29 of 29 passed (results/main-media_unittests-v4l2.txt). `v4l2_unittest`: its 7 tests are skipped on this platform (ChromeOS flat decoder and minigbm tests), none failed. Playback: H.264 1080p and 2160p, 600 of 600 frames each on `V4L2VideoDecoder` (91 and 34 dropped, 10.6% and 10.0% CPU). The log shows `H.264 stateless decode_mode=0 start_code=0` (slice-based, no start code). For comparison, stock Arch Linux ARM Chromium 157.0.8103.78 on the same machine and flags: every H.264 clip falls back to `FFmpegVideoDecoder`, at 53% CPU (1080p) and 107% (2160p). WebRTC loopback (OpenH264 sender, 1280x720, 15 fps): `ExternalDecoder (V4L2VideoDecoder)`, 269 frames decoded, 0 dropped, receiver CPU 5.3%; told the stream is High (64001f), the same.

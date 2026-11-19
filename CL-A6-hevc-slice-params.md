@@ -70,4 +70,4 @@ On 148 (patch 017 HEVC part): HEVC Main 1080p/2160p decode on AVD; before, the d
 
 ## Results on main
 
-Pending: the Studio build of `smartroom/v4l2-test` (`out/v4l2-a`).
+Unit: `media_unittests --gtest_filter='*V4L2*' --single-process-tests`: 29 of 29 passed (results/main-media_unittests-v4l2.txt). `v4l2_unittest`: its 7 tests are skipped on this platform (ChromeOS flat decoder and minigbm tests), none failed. Playback: HEVC 1080p, 2160p and the 8-bit `hevc10` clip, 600 of 600 frames each on `V4L2VideoDecoder` (36, 31, 34 dropped), and HEVC Main 10, 120 of 120. The log shows `HEVC stateless decode_mode=1 start_code=0 slice_params=1`; no `avd` kernel lines. For comparison, stock Arch Linux ARM Chromium 157.0.8103.78 on the same machine and flags: HEVC starts on `V4L2VideoDecoder`, shows 9 frames, and the kernel logs `avd: Frame processing timed out`.

@@ -54,4 +54,4 @@ Not from the 148 port. Found when the unit tests first ran on main in a Linux bu
 
 ## Results on main
 
-Pending: the Studio build of `smartroom/v4l2-test` (`out/v4l2-a`).
+Unit: `media_unittests --gtest_filter='*V4L2*' --single-process-tests`: 29 of 29 passed (results/main-media_unittests-v4l2.txt). `v4l2_unittest`: its 7 tests are skipped on this platform (ChromeOS flat decoder and minigbm tests), none failed. Before this change, 4 of the 11 `V4L2UtilsTest` tests failed (NV12, NV12M, YUV420, and the new P010 test), each only on the modifier: `0x0` (linear) against an expected `0xffffffffffffff`.

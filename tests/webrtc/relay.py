@@ -10,7 +10,7 @@ except ImportError:
     from websockets.server import serve
 
 ROOT = Path(__file__).resolve().parent
-# SR_FORCE_PROFILE=640c1f: the receiver is told the sender's constrained
+# SR_FORCE_PROFILE=64001f: the receiver is told the sender's constrained
 # baseline stream (42e01f) is High, and the answer is mapped back for the
 # sender. A constrained baseline stream is valid input for a High decoder.
 FORCE = os.environ.get("SR_FORCE_PROFILE", "")

@@ -61,4 +61,4 @@ On 148 (patch 018): AVD keeps a 64x64 coded format without it, rejects the probe
 
 ## Results on main
 
-Pending: the Studio build of `smartroom/v4l2-test` (`out/v4l2-a`).
+Unit: `media_unittests --gtest_filter='*V4L2*' --single-process-tests`: 29 of 29 passed (results/main-media_unittests-v4l2.txt). `v4l2_unittest`: its 7 tests are skipped on this platform (ChromeOS flat decoder and minigbm tests), none failed. Playback: every stateless decoder init on this build logged `SetupInputFormat(): Input (OUTPUT queue) Fourcc: S264` / `S265` and went on to decode; all 12 clips reached the end on `V4L2VideoDecoder`.

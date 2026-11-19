@@ -9,6 +9,7 @@
 # Never port 9222, never the kiosk profile.
 # Environment:
 #   PROFILE=cb|high   high: the relay tells the receiver the stream is H.264 High
+#                     (FORCE_ID, default 64001f = High 3.1; 640c1f is Constrained High)
 #   HIDE=none|start|after  receiver decoder nodes: present; absent from launch;
 #                     present at GPU start, then gone before the call (the V4L2
 #                     decoder is offered but its initialization fails)
@@ -46,7 +47,7 @@ ss -ltn | grep -qE ':(8770|8771|9349|9350) ' && { echo PORT_TAKEN; ss -ltnp | gr
 [ -f "$CAM" ] || { echo NO_CAM; exit 5; }
 rm -rf "$D"; mkdir -p "$D/send" "$D/recv" "$LOG"; chown -R $U:$U "$UH/.cache/sr-upstream"
 rm -f "$H/webrtc/stats.json" "$H/webrtc/sender-stats.json"
-[ "$PROFILE" = high ] && export SR_FORCE_PROFILE=640c1f || unset SR_FORCE_PROFILE
+[ "$PROFILE" = high ] && export SR_FORCE_PROFILE=${FORCE_ID:-64001f} || unset SR_FORCE_PROFILE
 /opt/smartroom/venv/bin/python "$H/webrtc/relay.py" >"$LOG/relay.log" 2>&1 &
 RELAY=$!; sleep 0.5; kill -0 $RELAY || { echo RELAY_DEAD; cat "$LOG/relay.log"; exit 6; }
 

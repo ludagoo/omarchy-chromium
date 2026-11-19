@@ -54,4 +54,4 @@ On 148 (patch 020): HEVC Main 10 and VP9 profile 2 frames map; without it the fr
 
 ## Results on main
 
-Pending: the Studio build of `smartroom/v4l2-test` (`out/v4l2-a`).
+Unit: `media_unittests --gtest_filter='*V4L2*' --single-process-tests`: 29 of 29 passed (results/main-media_unittests-v4l2.txt). `v4l2_unittest`: its 7 tests are skipped on this platform (ChromeOS flat decoder and minigbm tests), none failed. Playback: HEVC Main 10 (1080p, 120 frames, 9 dropped) and VP9 profile 2 (1080p, 600 frames, 29 dropped; 120 frames, 0 dropped) play to the end on `V4L2VideoDecoder`. For comparison, stock Arch Linux ARM Chromium 157.0.8103.78 on the same machine and flags: both 10-bit clips show 0 frames on `V4L2VideoDecoder`.
