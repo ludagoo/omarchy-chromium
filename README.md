@@ -28,8 +28,9 @@ Base: Chromium main `98478f51939a` (18 November 2026). Apply with
 the same test file, so send 0001 first. 0002 to 0007 are the decode fixes.
 0005 needs 0004, and 0006 needs 0005. The others stand alone. 0008 does not
 depend on them. It belongs with the desktop-V4L2 proposal in
-`CL-B-desktop-v4l2.md`, not with the decode fixes. 0008 applies to bare main;
-on top of 0001-0007 its `BUILD.gn` hunk needs a three-way apply (`git am -3`).
+`CL-B-desktop-v4l2.md`, not with the decode fixes. 0008 applies to bare main.
+The same change on top of 0001-0007 is `patches/on-a/0008-...patch` (only
+the `BUILD.gn` context differs).
 
 Each description file holds the Gerrit description, the files, the reviewers,
 the unit tests and the hardware results.
