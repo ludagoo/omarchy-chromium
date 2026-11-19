@@ -130,6 +130,7 @@ source=(https://commondatastorage.googleapis.com/chromium-browser-official/chrom
         chromium-155-use-system-esbuild.patch
         chromium-156-isolatedDeclarations.patch
         chromium-157-typescript.patch
+        chromium-158-bidi-protocol-import.patch
         compiler-rt-adjust-paths.patch
         increase-fortify-level.patch
         enable-widevine-arm64.patch
@@ -149,6 +150,7 @@ source=(https://commondatastorage.googleapis.com/chromium-browser-official/chrom
         sr-0010-room-Spread-V4L2-encoder-sessions-across-encoder-nod.patch
         sr-0011-room-Encode-HEVC-with-the-V4L2-stateful-encoder-on-L.patch
         sr-0012-room-Feed-the-desktop-Linux-V4L2-encoder-CPU-NV12-fr.patch
+        sr-0013-room-Derive-HEVC-chroma-offsets-in-the-V4L2-slice-pa.patch
         chromium-v4l2.rules)
 noextract=("gn-$_gn_rev-linux-arm64.zip")
 sha256sums=('8a93030a68231ea046479c47d6b26dfae43becef1b5343cf95f8146109291d6d'
@@ -167,6 +169,7 @@ sha256sums=('8a93030a68231ea046479c47d6b26dfae43becef1b5343cf95f8146109291d6d'
             'ded2abcb912ac4b6ad139e56384eea8f3b470cf57ecb0baa2c2d042df7575a23'
             'f6aefbd3f70dbda9242cf815a1dca56af729632166bc57e5067755b119cc95de'
             '655a43eaff824ba27f359790c31c43abd9fc4234026b0d039b8f2633dcb057cb'
+            'b56d509b4b2346cd5dce21899fabd22936449833e2e497ac6d3f007214856dae'
             'ec8e49b7114e2fa2d359155c9ef722ff1ba5fe2c518fa48e30863d71d3b82863'
             'd634d2ce1fc63da7ac41f432b1e84c59b7cceabf19d510848a7cff40c8025342'
             '5ee4bb69379ac0cea7946c9f8f4ca9e20e0a9e4ee2ee9121eb0ebbb94dd7e928'
@@ -186,6 +189,7 @@ sha256sums=('8a93030a68231ea046479c47d6b26dfae43becef1b5343cf95f8146109291d6d'
             'ccd212688d23027f092f5818c3fc14d13b345ce29f865d1ed5adf861439e3903'
             '3e23e9b3f452f6a95217d4ea8ee8083115bfd88e5c67edc1c81aea4174a0a8e1'
             'decd3f7e90880fd2bcda64bc7545885a672fa1cd922cc7b45c2e3c4d7febcea1'
+            '374e48755fb0516cd704e8b8035806d17d2056d6e9b02a8b455601f72ec93dfe'
             '6f804802f4ef24af2e1cf198854cc87560b4fb2085a869b288a4382a6fae865a')
 
 if (( _manual_clone )); then
@@ -331,6 +335,8 @@ prepare() {
   # WebUI and point devtools at the system tsc binary
   # https://github.com/ungoogled-software/ungoogled-chromium/pull/3966
   patch -Np1 -i ../chromium-157-typescript.patch
+  # chromium-bidi 158 uses Protocol without importing it; system tsc rejects that
+  patch -Np1 -i ../chromium-158-bidi-protocol-import.patch
 
   # SmartRoom: V4L2 decode fixes, GPU sandbox, room encoder patches
   local _p
