@@ -282,8 +282,12 @@ prepare() {
   # Fixes from Gentoo
   patch -Np1 -i ../chromium-138-nodejs-version-check.patch
 
-  # Allow libclang_rt.builtins from compiler-rt >= 16 to be used
-  patch -Np1 -i ../compiler-rt-adjust-paths.patch
+  # Allow libclang_rt.builtins from compiler-rt >= 16 to be used, but only
+  # where compiler-rt has the old lib/linux layout; with the per-target
+  # layout (lib/aarch64-unknown-linux-gnu) Chromium's own paths are right.
+  if compgen -G "/usr/lib/clang/*/lib/linux/libclang_rt.builtins-*.a" >/dev/null; then
+    patch -Np1 -i ../compiler-rt-adjust-paths.patch
+  fi
 
   # Increase _FORTIFY_SOURCE level to match Arch's default flags
   patch -Np1 -i ../increase-fortify-level.patch
