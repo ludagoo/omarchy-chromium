@@ -81,7 +81,12 @@ def main():
         c = commits[idx - 1]
         stat = git(repo, "show", "--stat=100", "--format=", c).rstrip()
         files = "\n".join("    " + l.strip() for l in stat.splitlines()[:-1])
-        patch = "upstream/%04d-%s.patch" % (idx if which == "a" else 8, slug)
+        num = idx if which == "a" else 8
+        pname = git(repo, "format-patch", "-1", "--start-number", str(num),
+                    "--stdout", c).splitlines()  # only to keep git's file name rule
+        subj = msg.splitlines()[0]
+        fname = re.sub(r"[^A-Za-z0-9._]+", "-", subj).strip("-.")[:52].rstrip("-.")
+        patch = "patches/%04d-%s.patch" % (num, fname)
         out = f"""# CL {cl}: {title}
 
 Prepared, not uploaded. Lucas uploads after an independent review and after

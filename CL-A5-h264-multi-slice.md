@@ -4,7 +4,7 @@ Prepared, not uploaded. Lucas uploads after an independent review and after
 the contributor agreement is on file (see REPORT.md).
 
 - Base: Chromium main `98478f51939a` (18 November 2026).
-- Patch: `upstream/0006-h264-multi-slice.patch` on branch `smartroom/upstream-main` of
+- Patch: `patches/0006-media-gpu-v4l2-Decode-multi-slice-H.264-pictures-on.patch` on branch `smartroom/upstream-main` of
   github.com/ludagoo/omarchy-chromium. Studio branch
   `smartroom/v4l2-upstream` in
   `/var/lib/srbuild/chromium-main/src`.

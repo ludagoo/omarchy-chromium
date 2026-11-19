@@ -4,7 +4,7 @@ Prepared, not uploaded. Lucas uploads after an independent review and after
 the contributor agreement is on file (see REPORT.md).
 
 - Base: Chromium main `98478f51939a` (18 November 2026).
-- Patch: `upstream/0003-coded-size-probe.patch` on branch `smartroom/upstream-main` of
+- Patch: `patches/0003-media-gpu-v4l2-Size-the-stateless-coded-format-befor.patch` on branch `smartroom/upstream-main` of
   github.com/ludagoo/omarchy-chromium. Studio branch
   `smartroom/v4l2-upstream` in
   `/var/lib/srbuild/chromium-main/src`.
