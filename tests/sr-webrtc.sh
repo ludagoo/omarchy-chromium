@@ -14,6 +14,7 @@
 #                     present at GPU start, then gone before the call (the V4L2
 #                     decoder is offered but its initialization fails)
 #   RECV_FEATURES=... --enable-features for the receiver
+#   SEND_FEATURES=... --enable-features for the sender (e.g. AcceleratedVideoEncoder)
 #   RECV_EXTRA="..."  more receiver switches
 #   T=20              seconds of call before the receiver reports
 set -u
@@ -54,6 +55,7 @@ RELAY=$!; sleep 0.5; kill -0 $RELAY || { echo RELAY_DEAD; cat "$LOG/relay.log"; 
 COMMON="--enable-gpu --use-gl=angle --use-angle=gles-egl --render-node-override=/dev/dri/renderD128 --enable-logging=stderr --no-first-run --no-default-browser-check --disable-session-crashed-bubble --autoplay-policy=no-user-gesture-required --use-fake-ui-for-media-stream --ozone-platform=wayland --ozone-platform-hint=wayland"
 cd "$(dirname "$SEND")"
 unshare --mount --propagation private bash -c "$(binds) exec runuser -u $U -- env $UENV '$SEND' $COMMON \
+  ${SEND_FEATURES:+--enable-features=$SEND_FEATURES} \
   --use-fake-device-for-media-stream --use-file-for-fake-video-capture=$CAM \
   --remote-debugging-port=9350 --user-data-dir=$D/send --class=sr-upstream-send --window-size=480,360 \
   'http://127.0.0.1:8770/?one=1'" >"$LOG/send.err" 2>&1 &
