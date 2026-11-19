@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Writes ~/smartroom-chromium-upstream/CL-*.md from the commit messages in
 split/msg and the per-CL facts below. Rerun after a message changes."""
-import os, re, subprocess
+import os, re, subprocess, tempfile
 
 R = os.path.expanduser("~/smartroom-chromium-upstream")
 REPO = {"a": os.path.join(R, "split/repo"), "b": os.path.join(R, "split/repo-b")}
@@ -82,11 +82,10 @@ def main():
         stat = git(repo, "show", "--stat=100", "--format=", c).rstrip()
         files = "\n".join("    " + l.strip() for l in stat.splitlines()[:-1])
         num = idx if which == "a" else 8
-        pname = git(repo, "format-patch", "-1", "--start-number", str(num),
-                    "--stdout", c).splitlines()  # only to keep git's file name rule
-        subj = msg.splitlines()[0]
-        fname = re.sub(r"[^A-Za-z0-9._]+", "-", subj).strip("-.")[:52].rstrip("-.")
-        patch = "patches/%04d-%s.patch" % (num, fname)
+        with tempfile.TemporaryDirectory() as tmp:
+            out_name = git(repo, "format-patch", "-1", "--start-number", str(num),
+                           "-o", tmp, c).strip()
+        patch = "patches/" + os.path.basename(out_name)
         out = f"""# CL {cl}: {title}
 
 Prepared, not uploaded. Lucas uploads after an independent review and after
