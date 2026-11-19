@@ -80,7 +80,7 @@ Test: Linux arm64 (Apple M2 Max, kernel 7.2): the pre-sandbox scan
 
 ## Evidence from the 148 port
 
-See CL-B-desktop-v4l2.md for the failures this removes (148 build and the supervisor's Zoom check without the udev links).
+Not a fix for what broke on 148: that was our patch 011 (ChromeOS names only). On Apple silicon the GPU seccomp sandbox does not engage today (stock 157: 'InitializeSandbox() called with multiple threads', Seccomp 0), so this change matters where the sandbox does engage. See CL-B-desktop-v4l2.md.
 
 ## Results on main
 
