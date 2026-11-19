@@ -1,4 +1,4 @@
-From 78bc43d6430a55c162648df186b0a51e6471c570 Mon Sep 17 00:00:00 2001
+From 811274c3bdb1df672e1582bf56d659f83b7d62dc Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:56:35 -0300
 Subject: [PATCH 09/12] room: Default AcceleratedVideoDecoder on for V4L2-only

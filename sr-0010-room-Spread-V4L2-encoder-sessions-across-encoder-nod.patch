@@ -1,4 +1,4 @@
-From dd6fedf6834043f2323b5519b62b68d83006cf76 Mon Sep 17 00:00:00 2001
+From 6553f5b9bceea110c7188c3b56888d9790772908 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:56:35 -0300
 Subject: [PATCH 10/12] room: Spread V4L2 encoder sessions across encoder nodes
