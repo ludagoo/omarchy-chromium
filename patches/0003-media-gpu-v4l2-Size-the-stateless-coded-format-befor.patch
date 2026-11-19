@@ -1,7 +1,7 @@
-From f9cc0bdf56889888835578b86539bca0f1f7760d Mon Sep 17 00:00:00 2001
+From 58a919d133c2dc4ea7cc747d73637b4388e753fc Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:15:21 -0300
-Subject: [PATCH 2/6] media/gpu/v4l2: Size the stateless coded format before
+Subject: [PATCH 3/7] media/gpu/v4l2: Size the stateless coded format before
  probing it
 
 SetupInputFormat() calls S_FMT on the OUTPUT (coded) queue with an
@@ -109,7 +109,7 @@ index feadeca..902d1f3 100644
  std::vector<SVCScalabilityMode> GetSupportedScalabilityModesForV4L2Codec(
      const IoctlAsCallback& ioctl_cb,
 diff --git a/media/gpu/v4l2/v4l2_utils_unittest.cc b/media/gpu/v4l2/v4l2_utils_unittest.cc
-index cc5a471..a2eb21b 100644
+index e012d44..d9cba9c 100644
 --- a/media/gpu/v4l2/v4l2_utils_unittest.cc
 +++ b/media/gpu/v4l2/v4l2_utils_unittest.cc
 @@ -4,6 +4,8 @@
@@ -121,8 +121,8 @@ index cc5a471..a2eb21b 100644
  #include <cstring>
  #include <sstream>
  #include <vector>
-@@ -129,6 +131,39 @@ TEST(V4L2UtilsTest, V4L2FormatToVideoFrameLayoutP010) {
-           kNoModifierStr + ")");
+@@ -142,6 +144,39 @@ TEST(V4L2UtilsTest, V4L2FormatToVideoFrameLayoutP010) {
+           kModifierStr + ")");
  }
  
 +TEST(V4L2UtilsTest, IsV4L2StatelessCodedFormat) {

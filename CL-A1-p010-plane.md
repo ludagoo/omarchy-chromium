@@ -4,7 +4,7 @@ Prepared, not uploaded. Lucas uploads after an independent review and after
 the contributor agreement is on file (see REPORT.md).
 
 - Base: Chromium main `98478f51939a` (18 November 2026).
-- Patch: `upstream/0001-p010-plane.patch` on branch `smartroom/upstream-main` of
+- Patch: `upstream/0002-p010-plane.patch` on branch `smartroom/upstream-main` of
   github.com/ludagoo/omarchy-chromium. Studio branch
   `smartroom/v4l2-upstream` in
   `/var/lib/srbuild/chromium-main/src`.
@@ -15,7 +15,7 @@ the contributor agreement is on file (see REPORT.md).
 Files:
 
     media/gpu/v4l2/v4l2_utils.cc          |  5 +++--
-    media/gpu/v4l2/v4l2_utils_unittest.cc | 26 ++++++++++++++++++++++++++
+    media/gpu/v4l2/v4l2_utils_unittest.cc | 25 +++++++++++++++++++++++++
 
 ## Description for Gerrit
 

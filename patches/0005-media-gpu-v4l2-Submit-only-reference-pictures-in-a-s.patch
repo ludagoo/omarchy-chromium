@@ -1,7 +1,7 @@
-From 463cf50425226adb106eae906c47d861d391e825 Mon Sep 17 00:00:00 2001
+From ab136286c2ef2318cc726bde3d8aa19efa585cf4 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:17:10 -0300
-Subject: [PATCH 4/6] media/gpu/v4l2: Submit only reference pictures in a
+Subject: [PATCH 5/7] media/gpu/v4l2: Submit only reference pictures in a
  slice-based H.264 DPB
 
 H264DPBToV4L2DPB() packs every picture of the H264DPB into

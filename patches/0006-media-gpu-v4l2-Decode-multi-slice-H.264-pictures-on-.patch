@@ -1,7 +1,7 @@
-From 3f3dca166ef01240f404d654b5bb0c948b10131c Mon Sep 17 00:00:00 2001
+From e836796298218d03e295b59fd1c97078b484216f Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:17:43 -0300
-Subject: [PATCH 5/6] media/gpu/v4l2: Decode multi-slice H.264 pictures on
+Subject: [PATCH 6/7] media/gpu/v4l2: Decode multi-slice H.264 pictures on
  slice-based devices
 
 A slice-based stateless decoder takes one slice per media request. The

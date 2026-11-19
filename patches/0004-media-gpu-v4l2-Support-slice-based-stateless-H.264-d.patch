@@ -1,7 +1,7 @@
-From 129d42d0b54ab104a6f3dfa16d835dd0e0ff713c Mon Sep 17 00:00:00 2001
+From 6bbc12d644e4bf3aa3edbfa0c793cf2b39910f54 Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:17:01 -0300
-Subject: [PATCH 3/6] media/gpu/v4l2: Support slice-based stateless H.264
+Subject: [PATCH 4/7] media/gpu/v4l2: Support slice-based stateless H.264
  decoders
 
 The V4L2 H.264 delegate always sets V4L2_CID_STATELESS_H264_DECODE_MODE
@@ -59,7 +59,7 @@ Assisted-by: Claude:claude-opus-5-5
  create mode 100644 media/gpu/v4l2/v4l2_h264_slice_unittest.cc
 
 diff --git a/media/gpu/v4l2/BUILD.gn b/media/gpu/v4l2/BUILD.gn
-index 504ae16..a75d4e4 100644
+index 5c04513..f789b6c 100644
 --- a/media/gpu/v4l2/BUILD.gn
 +++ b/media/gpu/v4l2/BUILD.gn
 @@ -27,6 +27,8 @@ source_set("v4l2") {
