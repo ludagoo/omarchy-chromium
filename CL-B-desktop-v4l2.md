@@ -2,7 +2,7 @@
 
 This is a design proposal, not one of the decode fixes. Do not send it to Gerrit with them. Do not flip a default. Official Chrome keeps `use_v4l2_codec` off, and VA-API stays the desktop path. Lucas signs the contributor agreement and uploads only after an independent review. Nothing here has been uploaded.
 
-One code change goes with it: the sandbox change in `CL-B1-sandbox-codec-nodes.md` (patch 0007 on `smartroom/upstream-main`). Attach it to the proposal as the concrete first step.
+One code change goes with it: the sandbox change in `CL-B1-sandbox-codec-nodes.md` (patch 0007 on `smartroom/upstream-main`). Attach it to the proposal. It makes the broker policy match the devices `V4L2Device` already opens on desktop Linux. On Apple silicon the GPU sandbox does not engage today, so it changes nothing there yet (see below).
 
 ## What to ask
 
@@ -18,11 +18,15 @@ The run line for a distro build that already passes `use_v4l2_codec=true` is:
 
 Both features exist. `PreferV4L2VideoAcceleration` defaults off. `AcceleratedVideoDecoder` defaults on only when VA-API is compiled. Leave that default upstream. A V4L2-only build does not turn the decoder on by itself. (Our room package turns it on in its own patch.)
 
-## Why the sandbox is the blocker
+## The sandbox, and what really broke on 148
 
-On desktop Linux, main's `V4L2Device` already looks for codecs at `/dev/videoN` and `/dev/mediaN`. It pairs a decoder with its media controller by `bus_info`, and by driver name when `bus_info` is empty. The GPU process broker, however, allows V4L2 nodes only on ChromeOS and Chromecast, and only under the ChromeOS names `/dev/video-decN`, `/dev/media-decN` and `/dev/video-encN`. So once the GPU sandbox is on, a desktop build with `use_v4l2_codec=true` finds nothing.
+On desktop Linux, main's `V4L2Device` already looks for codecs at `/dev/videoN` and `/dev/mediaN`. It pairs a decoder with its media controller by `bus_info`, and by driver name when `bus_info` is empty. The GPU process broker policy allows V4L2 nodes only on ChromeOS and Chromecast, and only under the ChromeOS names `/dev/video-decN`, `/dev/media-decN` and `/dev/video-encN`.
 
-What that looks like on a real machine (Apple M2 Max, our 148 room build, 18 November 2026). That build had a patch (our 011) that made Linux look only under the ChromeOS names, and a udev rule was supposed to create them. After a reboot the rule was not installed and the links were gone:
+On Apple silicon that policy is not what blocks anything today, because the GPU seccomp sandbox does not engage there (Studio, 19 November 2026). Stock Arch Linux ARM Chromium 157, run with every sandbox on, logs `InitializeSandbox() called with multiple threads in process gpu-process`. Its GPU process then runs with `Seccomp: 0`, so the broker list is never applied. That GPU process opened `/dev/video0` and `/dev/media0` with no links. With `--gpu-sandbox-start-early` the sandbox does engage (`Seccomp: 2`), and then the GPU process cannot even load Mesa (`Could not dlopen native EGL: libEGL.so.1: Permission denied`) and exits. That is a separate gap: the pre-sandbox hook preloads GL only for the GPU vendors it knows. It is not part of this proposal.
+
+So the sandbox change (CL-B1) is about correctness for wherever the sandbox does engage. It is not a fix for something Apple silicon users hit today. A desktop V4L2 build should not depend on the GPU sandbox failing to start.
+
+What did break on the room's 148 build (Apple M2 Max, 18 November 2026) was our own patch 011. It made Linux look only under the ChromeOS names, and a udev rule was supposed to create them. Without the links:
 
 - The decoder logged `No V4L2 API found for profile: h264 high`.
 - The encoder list was empty.
@@ -30,7 +34,9 @@ What that looks like on a real machine (Apple M2 Max, our 148 room build, 18 Nov
 
 The same build, with the links made by hand, decoded three inbound 320x180 H.264 streams on `V4L2VideoDecoder` with 0 dropped, at about 0.9 ms per frame. It encoded the 640x360 layer on `V4L2VideoEncodeAccelerator`.
 
-Distributions work around the sandbox with `--disable-gpu-sandbox`, which drops the sandbox for the whole GPU process, or with links plus a patch like our 011. Both are fragile, and the first is a security cost.
+Main and 157 do not have patch 011, so they find `/dev/video0` without links. That is one more reason not to send 011.
+
+Stock 157 on the Studio also shows what main is missing (12 clips, `AcceleratedVideoDecoder` on). H.264 initializes V4L2 in frame-based mode, AVD only offers slice-based, so every H.264 clip falls back to FFmpeg at 53% CPU (1080p) and 107% (2160p). HEVC starts on `V4L2VideoDecoder`, shows 9 frames, and the kernel logs `avd: Frame processing timed out`, because no slice parameters are sent. VP9 profile 0 plays all 600 frames on V4L2, so main's compressed-header support works on AVD. VP9 profile 2 and HEVC Main 10 show 0 frames. The A changes are what fix those.
 
 ## What the change would actually do
 
@@ -41,7 +47,7 @@ Distributions work around the sandbox with `--disable-gpu-sandbox`, which drops 
    - it takes a compressed video format (decoder) or produces one (encoder);
    - that format is not JPEG.
 
-   For each decoder it also keeps the `/dev/mediaN` that `V4L2Device` will pair with it. Exactly those paths are allowed, plus the ChromeOS names, so existing udev rules keep working. Cameras, capture cards and v4l2loopback devices are not memory-to-memory, so they never get into the GPU process. Decoder nodes are added only when accelerated decode is enabled, and encoder nodes only when accelerated encode is. No device-name patch is needed, and no udev rule. Boards that already use `/dev/videoN` (Pi, Rockchip) work unchanged.
+   For each decoder it also keeps the `/dev/mediaN` that `V4L2Device` will pair with it. Exactly those paths are allowed, plus the ChromeOS names, so existing udev rules keep working. Cameras, capture cards and v4l2loopback devices are not memory-to-memory, so they never get into the GPU process. Decoder nodes are added only when accelerated decode is enabled, and encoder nodes only when accelerated encode is. No device-name patch is needed, and no udev rule. Boards that already use `/dev/videoN` (Pi, Rockchip) work unchanged. Where the GPU sandbox does not engage (Apple silicon with Mesa today), the scan only matters later, once it does.
 
    Do not send our patch 011. It forces the ChromeOS names, and that hides the decoder on every board without the udev rule.
 
@@ -53,7 +59,7 @@ Distributions work around the sandbox with `--disable-gpu-sandbox`, which drops 
 
 4. The encoder's minimum size is the driver's business. Apple's AVE advertises 320x240 as its smallest frame (`VIDIOC_ENUM_FRAMESIZES`). Chromium respects that. In the Zoom call, the simulcast adapter put the 320x180 layer on OpenH264 and the 640x360 layer on AVE (`SimulcastEncoderAdapter (OpenH264, V4L2VideoEncodeAccelerator)`). That fallback is correct behavior. A smaller floor is a driver change.
 
-5. Say who it helps. The stateless decode fixes (slice parameters, DPB flags, reference lists, the held capture buffer, P010, the format probe, HEVC slice parameters) help kernels whose stateless decoder is slice-based. That is Apple's AVD on Asahi, and the usual hantro, cedrus and Rockchip stateless drivers when they advertise slice mode. Raspberry Pi OS Chromium 151 and later uses upstream's stateful decoder (`bcm2835-codec` on `/dev/videoN`), which those fixes do not touch. The sandbox change helps every one of them.
+5. Say who it helps. The stateless decode fixes (slice parameters, DPB flags, reference lists, the held capture buffer, P010, the format probe, HEVC slice parameters) help kernels whose stateless decoder is slice-based. That is Apple's AVD on Asahi, and the usual hantro, cedrus and Rockchip stateless drivers when they advertise slice mode. Raspberry Pi OS Chromium 151 and later uses upstream's stateful decoder (`bcm2835-codec` on `/dev/videoN`), which those fixes do not touch. The sandbox change matters to every one of them wherever their GPU sandbox engages.
 
 ## What stays out
 
