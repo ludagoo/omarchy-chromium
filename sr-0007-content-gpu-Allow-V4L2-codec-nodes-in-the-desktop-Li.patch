@@ -1,4 +1,4 @@
-From 97beeca588d9e4e042829cedd86dbabca400fad7 Mon Sep 17 00:00:00 2001
+From 6f59c82ba934468d6722a440a3550c37550419af Mon Sep 17 00:00:00 2001
 From: Lucas Goossen <lucas.goossen@hey.com>
 Date: Wed, 18 Nov 2026 18:21:58 -0300
 Subject: [PATCH 07/12] content/gpu: Allow V4L2 codec nodes in the desktop
@@ -6,18 +6,21 @@ Subject: [PATCH 07/12] content/gpu: Allow V4L2 codec nodes in the desktop
 
 A Linux build with use_v4l2_codec=true compiles the V4L2 decoder, and
 on Linux V4L2Device looks for it at /dev/videoN and /dev/mediaN. The
-GPU process broker, however, allows V4L2 nodes only on ChromeOS and
-Chromecast, and only under the ChromeOS names (/dev/video-decN,
-/dev/media-decN, /dev/video-encN). With the GPU sandbox on, a desktop
-build therefore finds no V4L2 device: "No V4L2 API found for profile:
-h264 high" and an empty encoder profile list.
+GPU process broker policy, however, allows V4L2 nodes only on ChromeOS
+and Chromecast, and only under the ChromeOS names (/dev/video-decN,
+/dev/media-decN, /dev/video-encN).
 
-Distributions work around this with --disable-gpu-sandbox, or with a
-udev rule that creates the ChromeOS names plus a patch that makes Linux
-look only for those. The second one fails quietly whenever the links
-are missing (rule not installed, or a hand-made link gone after a
-reboot). On Apple M2 Max with such a build, a WebRTC call then had no
-hardware decoder for H.264 and showed no remote video.
+Today this rarely shows, because on many desktop GPU stacks the GPU
+seccomp sandbox does not engage at all: GL initialization starts
+driver threads first, and the sandbox logs "InitializeSandbox() called
+with multiple threads in process gpu-process" and leaves the process
+without seccomp, so the broker policy is never applied. That is the
+case on Apple M2 Max with Mesa (asahi), where a stock Arch Linux ARM
+Chromium 157 opens /dev/video0 and /dev/media0 from an unsandboxed GPU
+process. Wherever the sandbox does engage (a GPU stack that initializes
+single-threaded, or --gpu-sandbox-start-early), every open of a codec
+node is denied and decode silently falls back to software. A desktop
+V4L2 build should not depend on the GPU sandbox failing to start.
 
 Find the codec nodes before the sandbox starts and allow exactly
 those. FindV4L2CodecDevicePaths() lists /dev/videoN nodes that are
@@ -37,10 +40,12 @@ both set, the scan finds nothing on a machine without V4L2 codecs.
 
 Bug: None
 Test: media_unittests --gtest_filter=V4L2CodecNodesTest.*
-Test: Linux arm64 (Apple M2 Max, kernel 7.2), GPU sandbox on, no
-      /dev/video-dec* or /dev/video-enc* links: H.264 plays on
-      V4L2VideoDecoder; the v4l2loopback cameras are not opened by
-      the GPU process
+Test: Linux arm64 (Apple M2 Max, kernel 7.2): the pre-sandbox scan
+      lists /dev/video0 + /dev/media0 (AVD) and /dev/video10, 11 (AVE)
+      and not the four v4l2loopback cameras; H.264 plays on
+      V4L2VideoDecoder. The sandbox-engaged case could not be run on
+      this machine: with --gpu-sandbox-start-early the GPU process
+      cannot dlopen libEGL.so.1 (with or without this change)
 Assisted-by: Claude:claude-opus-5-5
 ---
  content/common/gpu_pre_sandbox_hook_linux.cc |  23 ++
