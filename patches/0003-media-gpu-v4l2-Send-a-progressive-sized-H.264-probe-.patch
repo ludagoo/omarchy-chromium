@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lucas Goossen <lucas.goossen@hey.com>
+Date: Wed, 18 Nov 2026 18:15:21 -0300
+Subject: [PATCH] media/gpu/v4l2: Send a progressive, sized H.264 probe SPS
+
+SetExtCtrlsInit() sends an H.264 SPS before the first frame so that a
+stateless driver lists its CAPTURE formats. That SPS has only the bit
+depth and chroma format: no frame_mbs_only_flag and no picture size.
+
+Apple's AVD driver rejects an SPS without frame_mbs_only_flag (it does
+not decode interlaced streams), at S_EXT_CTRLS and again at STREAMON,
+so the probe fails and decoder init fails. The driver also sizes its
+per-picture slice table from pic_height_in_map_units_minus1 when
+streaming starts, so the probe should describe the real picture.
+
+Fill the probe SPS from the size SetupOutputFormat() gets (the same
+size ApplyResolution() just set on the coded queue) and mark it
+progressive. Each frame still sends the SPS the parser read.
+
+Other drivers also receive this SPS. Hantro and rkvdec check only the
+chroma format and bit depth, and rkvdec also checks that the SPS is not
+larger than the coded format, which holds because both use the same
+size. Only Apple AVD was tested.
+
+AI-DISCLOSURE-PLACEHOLDER: replace with Lucas's own sentence.
+
+Bug: TRACKING-BUG-PLACEHOLDER
+Test: media_unittests --gtest_filter=V4L2UtilsTest.*
+Test: H.264 1080p and 2160p decoder init and playback on Apple AVD, with A3-A5
+---
+ media/gpu/v4l2/v4l2_utils.cc          | 16 ++++++++++++++++
+ media/gpu/v4l2/v4l2_utils.h           |  8 ++++++++
+ media/gpu/v4l2/v4l2_utils_unittest.cc | 22 ++++++++++++++++++++++
+ media/gpu/v4l2/v4l2_video_decoder.cc  |  5 +----
+ 4 files changed, 47 insertions(+), 4 deletions(-)
+
+diff --git a/media/gpu/v4l2/v4l2_utils.cc b/media/gpu/v4l2/v4l2_utils.cc
+index a562c08f..31413531 100644
+--- a/media/gpu/v4l2/v4l2_utils.cc
++++ b/media/gpu/v4l2/v4l2_utils.cc
+@@ -5,6 +5,7 @@
+ #include "media/gpu/v4l2/v4l2_utils.h"
+ 
+ #include <fcntl.h>
++#include <linux/v4l2-controls.h>
+ #include <sys/ioctl.h>
+ 
+ #include <algorithm>
+@@ -647,6 +648,21 @@ std::optional<SupportedVideoDecoderConfigs> GetSupportedV4L2DecoderConfigs() {
+   return supported_media_configs;
+ }
+ 
++v4l2_ctrl_h264_sps MakeH264ProbeSps(const gfx::Size& size, uint8_t bit_depth) {
++  v4l2_ctrl_h264_sps sps = {};
++  sps.bit_depth_luma_minus8 = (bit_depth == 10u) ? 2 : 0;
++  sps.bit_depth_chroma_minus8 = (bit_depth == 10u) ? 2 : 0;
++  sps.chroma_format_idc = 1;  // 4:2:0
++  sps.flags = V4L2_H264_SPS_FLAG_FRAME_MBS_ONLY;
++  if (!size.IsEmpty()) {
++    sps.pic_width_in_mbs_minus1 =
++        base::checked_cast<__u16>((size.width() + 15) / 16 - 1);
++    sps.pic_height_in_map_units_minus1 =
++        base::checked_cast<__u16>((size.height() + 15) / 16 - 1);
++  }
++  return sps;
++}
++
+ bool IsV4L2DecoderStateful() {
+   auto device_fd = V4L2Device::OpenFDForType(V4L2Device::Type::kDecoder);
+   if (!device_fd.is_valid()) {
+diff --git a/media/gpu/v4l2/v4l2_utils.h b/media/gpu/v4l2/v4l2_utils.h
+index feadeca3..27d78889 100644
+--- a/media/gpu/v4l2/v4l2_utils.h
++++ b/media/gpu/v4l2/v4l2_utils.h
+@@ -81,6 +81,14 @@ size_t GetNumPlanesOfV4L2PixFmt(uint32_t pix_fmt);
+ std::optional<VideoFrameLayout> V4L2FormatToVideoFrameLayout(
+     const struct v4l2_format& format);
+ 
++// H.264 sequence header that SetExtCtrlsInit() sends so that a stateless
++// driver lists its CAPTURE formats before the first frame. It describes a
++// progressive 4:2:0 picture of |size| (macroblock fields 0 if |size| is empty)
++// at |bit_depth|. A driver may reject an SPS without frame_mbs_only_flag, and
++// may size per-picture tables from it when streaming starts. Each frame later
++// sends the SPS the parser read.
++v4l2_ctrl_h264_sps MakeH264ProbeSps(const gfx::Size& size, uint8_t bit_depth);
++
+ // Query the driver to see what scalability modes are supported for the driver.
+ std::vector<SVCScalabilityMode> GetSupportedScalabilityModesForV4L2Codec(
+     const IoctlAsCallback& ioctl_cb,
+diff --git a/media/gpu/v4l2/v4l2_utils_unittest.cc b/media/gpu/v4l2/v4l2_utils_unittest.cc
+index e012d444..736f6766 100644
+--- a/media/gpu/v4l2/v4l2_utils_unittest.cc
++++ b/media/gpu/v4l2/v4l2_utils_unittest.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "media/gpu/v4l2/v4l2_utils.h"
+ 
++#include <linux/v4l2-controls.h>
++
+ #include <cstring>
+ #include <sstream>
+ #include <vector>
+@@ -142,6 +144,26 @@ TEST(V4L2UtilsTest, V4L2FormatToVideoFrameLayoutP010) {
+           kModifierStr + ")");
+ }
+ 
++TEST(V4L2UtilsTest, H264ProbeSpsMatchesThePicture) {
++  v4l2_ctrl_h264_sps sps = MakeH264ProbeSps(gfx::Size(1920, 1080), 8);
++  EXPECT_EQ(0u, sps.bit_depth_luma_minus8);
++  EXPECT_EQ(1u, sps.chroma_format_idc);
++  EXPECT_EQ(static_cast<decltype(sps.flags)>(V4L2_H264_SPS_FLAG_FRAME_MBS_ONLY),
++            sps.flags);
++  EXPECT_EQ(119u, sps.pic_width_in_mbs_minus1);
++  EXPECT_EQ(67u, sps.pic_height_in_map_units_minus1);
++
++  sps = MakeH264ProbeSps(gfx::Size(1920, 1080), 10);
++  EXPECT_EQ(2u, sps.bit_depth_luma_minus8);
++  EXPECT_EQ(2u, sps.bit_depth_chroma_minus8);
++
++  sps = MakeH264ProbeSps(gfx::Size(), 8);
++  EXPECT_EQ(0u, sps.pic_width_in_mbs_minus1);
++  EXPECT_EQ(0u, sps.pic_height_in_map_units_minus1);
++  EXPECT_EQ(static_cast<decltype(sps.flags)>(V4L2_H264_SPS_FLAG_FRAME_MBS_ONLY),
++            sps.flags);
++}
++
+ // Test V4L2FormatToVideoFrameLayout with NV12M pixelformat, which has two
+ // buffers and two color planes.
+ TEST(V4L2UtilsTest, V4L2FormatToVideoFrameLayoutNV12M) {
+diff --git a/media/gpu/v4l2/v4l2_video_decoder.cc b/media/gpu/v4l2/v4l2_video_decoder.cc
+index 5ced27f6..c4f8e4dd 100644
+--- a/media/gpu/v4l2/v4l2_video_decoder.cc
++++ b/media/gpu/v4l2/v4l2_video_decoder.cc
+@@ -778,10 +778,7 @@ CroStatus V4L2VideoDecoder::SetExtCtrlsInit(const gfx::Size& size,
+   if (input_format_fourcc_ == V4L2_PIX_FMT_H264_SLICE) {
+     // For H264 the SPS data is sent in to indicate bit_depth content.
+     VLOGF(1) << "Setting EXT_CTRLS for H264";
+-    v4l2_h264_sps = {};
+-    v4l2_h264_sps.bit_depth_luma_minus8 = (bit_depth == 10u) ? 2 : 0;
+-    v4l2_h264_sps.bit_depth_chroma_minus8 = (bit_depth == 10u) ? 2 : 0;
+-    v4l2_h264_sps.chroma_format_idc = 1;  // 4:2:0
++    v4l2_h264_sps = MakeH264ProbeSps(size, bit_depth);
+ 
+     ctrl.id = V4L2_CID_STATELESS_H264_SPS;
+     ctrl.size = sizeof(v4l2_h264_sps);
+-- 
+2.56.0
+

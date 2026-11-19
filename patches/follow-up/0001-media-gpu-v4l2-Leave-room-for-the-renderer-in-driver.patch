@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lucas Goossen <lucas.goossen@hey.com>
+Date: Thu, 19 Nov 2026 14:09:40 -0300
+Subject: [PATCH] media/gpu/v4l2: Leave room for the renderer in
+ driver-allocated buffers
+
+Without a frame pool (desktop Linux), V4L2VideoDecoder asks the driver
+for num_codec_reference_frames + 2 CAPTURE buffers: the DPB, the frame
+being decoded and one more. The renderer and the compositor hold decoded
+frames too. After a seek in a paused <video>, the decoder refills its
+DPB from the key frame while the renderer still holds frames. With a
+1080p H.264 stream with B-frames (level 4.0, a DPB of 4, so 6 buffers)
+the decoder runs out of buffers and the seek never completes; the same
+stream labelled level 5.1 (a larger DPB, so more buffers) seeks fine.
+Playback without seeking keeps going because the renderer releases
+frames as it plays them.
+
+Add limits::kMaxVideoFrames, the most frames the renderer queues, to the
+driver-allocated count. The DMABUF path already asks for VIDEO_MAX_FRAME
+shallow buffers and does not change.
+
+AI-DISCLOSURE-PLACEHOLDER: replace with Lucas's own sentence.
+
+Bug: TRACKING-BUG-PLACEHOLDER
+Test: 1080p H.264 seeks with B-frames on Apple AVD: 8 of 8 done, 5 hung before
+---
+ media/gpu/v4l2/v4l2_video_decoder.cc | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/media/gpu/v4l2/v4l2_video_decoder.cc b/media/gpu/v4l2/v4l2_video_decoder.cc
+index 5ced27f6..4a0d5c7a 100644
+--- a/media/gpu/v4l2/v4l2_video_decoder.cc
++++ b/media/gpu/v4l2/v4l2_video_decoder.cc
+@@ -1204,10 +1204,13 @@ CroStatus V4L2VideoDecoder::ContinueChangeResolution(
+   // If we don't use driver-allocated buffers, request as many as possible
+   // (VIDEO_MAX_FRAME) since they are shallow allocations. Otherwise, allocate
+   // |num_codec_reference_frames| plus one for the video frame being decoded,
+-  // and one for our client (presumably an ImageProcessor).
+-  const size_t v4l2_num_buffers = use_v4l2_allocated_buffers
+-                                      ? num_codec_reference_frames + 2
+-                                      : VIDEO_MAX_FRAME;
++  // one for our client (presumably an ImageProcessor), and the frames the
++  // renderer may hold. Without the last ones the decoder can run out of
++  // buffers while the renderer waits for a frame, e.g. after a seek.
++  const size_t v4l2_num_buffers =
++      use_v4l2_allocated_buffers
++          ? num_codec_reference_frames + 2 + limits::kMaxVideoFrames
++          : VIDEO_MAX_FRAME;
+ 
+   VLOGF(1) << "Requesting: " << v4l2_num_buffers << " CAPTURE buffers of type "
+            << (use_v4l2_allocated_buffers ? "V4L2_MEMORY_MMAP"
+-- 
+2.56.0
+

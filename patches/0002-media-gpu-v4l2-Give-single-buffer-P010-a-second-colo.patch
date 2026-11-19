@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lucas Goossen <lucas.goossen@hey.com>
+Date: Wed, 18 Nov 2026 18:14:39 -0300
+Subject: [PATCH] media/gpu/v4l2: Give single-buffer P010 a second color plane
+
+V4L2FormatToVideoFrameLayout() derives the UV plane of a one-buffer
+format from the Y plane only for V4L2_PIX_FMT_NV12. A driver that
+returns V4L2_PIX_FMT_P010 (one buffer, 16-bit samples, interleaved UV
+at half height) produced a one-plane layout, so the frame was rejected
+and 10-bit output could not be mapped.
+
+P010 has the NV12 shape with 16-bit samples. bytesperline is already
+in bytes, so the chroma plane uses the same stride and half the luma
+height, exactly like NV12.
+
+Tested on Apple AVD only (Linux arm64): HEVC Main 10 and VP9 profile 2.
+
+AI-DISCLOSURE-PLACEHOLDER: replace with Lucas's own sentence.
+
+Bug: TRACKING-BUG-PLACEHOLDER
+Test: media_unittests --gtest_filter=V4L2UtilsTest.*P010*
+Test: HEVC Main 10 and VP9 profile 2 clips on Apple AVD; matches FFmpeg
+---
+ media/gpu/v4l2/v4l2_utils.cc          |  5 +++--
+ media/gpu/v4l2/v4l2_utils_unittest.cc | 25 +++++++++++++++++++++++++
+ 2 files changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/media/gpu/v4l2/v4l2_utils.cc b/media/gpu/v4l2/v4l2_utils.cc
+index e9c3a85b..a562c08f 100644
+--- a/media/gpu/v4l2/v4l2_utils.cc
++++ b/media/gpu/v4l2/v4l2_utils.cc
+@@ -283,8 +283,9 @@ std::optional<VideoFrameLayout> V4L2FormatToVideoFrameLayout(
+     const size_t y_stride_abs = static_cast<size_t>(y_stride);
+     switch (pix_fmt) {
+       case V4L2_PIX_FMT_NV12:
+-        // The stride of UV is the same as Y in NV12.
+-        // The height is half of Y plane.
++      case V4L2_PIX_FMT_P010:
++        // UV has the same stride as Y and half the height. P010 is the
++        // 16-bit version of that layout; bytesperline is already in bytes.
+         planes.emplace_back(y_stride, y_stride_abs * pix_mp.height,
+                             y_stride_abs * pix_mp.height / 2);
+         DCHECK_EQ(2u, planes.size());
+diff --git a/media/gpu/v4l2/v4l2_utils_unittest.cc b/media/gpu/v4l2/v4l2_utils_unittest.cc
+index 7a984e3d..e012d444 100644
+--- a/media/gpu/v4l2/v4l2_utils_unittest.cc
++++ b/media/gpu/v4l2/v4l2_utils_unittest.cc
+@@ -117,6 +117,31 @@ TEST(V4L2UtilsTest, V4L2FormatToVideoFrameLayoutNV12) {
+           kModifierStr + ")");
+ }
+ 
++// P010 is one buffer and two color planes, the same shape as NV12 with
++// 16-bit samples. bytesperline is already in bytes, so a 300-wide picture
++// with stride 640 keeps that stride on the chroma plane.
++TEST(V4L2UtilsTest, V4L2FormatToVideoFrameLayoutP010) {
++  auto layout = V4L2FormatToVideoFrameLayout(V4L2FormatVideoOutputMplane(
++      300, 180, V4L2_PIX_FMT_P010, V4L2_FIELD_ANY, {640}, {172800}));
++  ASSERT_TRUE(layout.has_value());
++  EXPECT_EQ(PIXEL_FORMAT_P010LE, layout->format());
++  EXPECT_EQ(gfx::Size(300, 180), layout->coded_size());
++  std::vector<ColorPlaneLayout> expected_planes(
++      {{640, 0u, 172800u}, {640, 115200u, 57600u}});
++  EXPECT_EQ(expected_planes, layout->planes());
++  EXPECT_EQ(layout->is_multi_planar(), false);
++  std::ostringstream ostream;
++  ostream << *layout;
++  const std::string kModifierStr = ExpectedModifierString();
++  EXPECT_EQ(
++      ostream.str(),
++      "VideoFrameLayout(format: PIXEL_FORMAT_P010LE, coded_size: 300x180, "
++      "planes (stride, offset, size): [(640, 0, 172800), (640, 115200, "
++      "57600)], "
++      "is_multi_planar: 0, buffer_addr_align: 4096, modifier: " +
++          kModifierStr + ")");
++}
++
+ // Test V4L2FormatToVideoFrameLayout with NV12M pixelformat, which has two
+ // buffers and two color planes.
+ TEST(V4L2UtilsTest, V4L2FormatToVideoFrameLayoutNV12M) {
+-- 
+2.56.0
+
